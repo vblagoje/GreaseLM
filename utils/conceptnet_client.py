@@ -1,5 +1,9 @@
+import json
+import sys
+from collections import OrderedDict
 from typing import Dict, List, Any
 
+import numpy as np
 import requests
 
 from scipy.sparse import coo_matrix
@@ -14,14 +18,15 @@ class ConceptNetClient:
         self.host = host
 
     def resolve_csqa(self, common_sense_qa_example: Dict[str, str]):
-        response = None
-        r = requests.get(url=self.host + "/csqa",
-                         params=common_sense_qa_example,
-                         timeout=5)
-        if r.status_code == 200:
-            response = self.json_to_subgraph(r.json())
+        response = {"result": None}
+        r = requests.post(url=self.host + "/csqa/",
+                          json=common_sense_qa_example)
 
-        return r.status_code, response
+        response["status_code"] = r.status_code
+        if r.status_code == 200:
+            response["result"] = self.json_to_subgraph(r.json())
+
+        return response
 
     def json_to_subgraph(self, json_response: List[Dict[str, str]]):
         response = []
@@ -30,14 +35,14 @@ class ConceptNetClient:
         return response
 
     def parse_response_csqa_example(self, csqa_response: Dict[str, Any]):
-        return {"adj": self.adj_list_to_coo_matrix(csqa_response["adj"]),
-                "concepts": csqa_response["concepts"],
-                "qmask": csqa_response["qmask"],
-                "amask": csqa_response["amask"],
-                "cid2score": [(i[0], i[1]) for i in csqa_response["cid2score"]],
+        return {"adj": self.adj_list_to_coo_matrix(csqa_response["adj"], csqa_response["adj_shape"]),
+                "concepts": np.array(csqa_response["concepts"], dtype=np.int32),
+                "qmask": np.array(csqa_response["qmask"]),
+                "amask": np.array(csqa_response["amask"]),
+                "cid2score": OrderedDict([(i[0], i[1]) for i in csqa_response["cid2score"]]),
                 }
 
-    def adj_list_to_coo_matrix(self, adj_list: List[List[int]]):
+    def adj_list_to_coo_matrix(self, adj_list: List[List[int]], adj_shape: List[int]):
         """
         It takes a list of lists, where the first list is the row indices and the second list is the column indices, and
         returns a sparse matrix in COOrdinate format
@@ -50,5 +55,16 @@ class ConceptNetClient:
         rows = adj_list[0]
         cols = adj_list[1]
         assert len(rows) == len(cols)
-        data = [1] * len(rows)
-        return coo_matrix((data, (rows, cols)), shape=(len(rows), len(cols)))
+        data = np.array([1] * len(rows), dtype=np.uint8)
+        print("adj_shape", adj_shape)
+        return coo_matrix((data, (rows, cols)), shape=(adj_shape[0], adj_shape[1]))
+
+
+if __name__ == "__main__":
+    print(sys.argv[1])
+    statement_file = open(sys.argv[1], "r")
+    c: ConceptNetClient = ConceptNetClient()
+    for line in statement_file:
+        common_sense_qa_example = json.loads(line)
+        response = c.resolve_csqa(common_sense_qa_example)
+        print ([r["adj"] for r in response["result"]])
