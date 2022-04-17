@@ -4,6 +4,13 @@ from utils import utils
 
 ENCODER_DEFAULT_LR = {
     'default': 1e-3,
+    'mcsqa': {
+        'lstm': 3e-4,
+        'openai-gpt': 1e-4,
+        'bert-base-uncased': 3e-5,
+        'bert-large-uncased': 2e-5,
+        'roberta-large': 1e-5,
+    },
     'csqa': {
         'lstm': 3e-4,
         'openai-gpt': 1e-4,
@@ -23,9 +30,10 @@ ENCODER_DEFAULT_LR = {
     },
 }
 
-DATASET_LIST = ['csqa', 'obqa', 'medqa_usmle']
+DATASET_LIST = ['mcsqa', 'csqa', 'obqa', 'medqa_usmle']
 
 DATASET_SETTING = {
+    'mcsqa': 'official',
     'csqa': 'inhouse',
     'obqa': 'official',
     'medqa_usmle': 'official',

@@ -3,9 +3,7 @@ import logging
 import random
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from tqdm import tqdm
+from utils.graph_loader import GraphLoader
 
 try:
     from transformers import (ConstantLRSchedule, WarmupLinearSchedule, WarmupConstantSchedule)
@@ -13,7 +11,6 @@ except:
     from transformers import get_constant_schedule, get_constant_schedule_with_warmup, get_linear_schedule_with_warmup
 
 from modeling import modeling_greaselm
-from utils import graph_loader
 from utils import parser_utils
 from utils import utils
 
@@ -74,56 +71,17 @@ def construct_model(args, kg):
     return model
 
 
-def calc_loss_and_acc(logits, labels, loss_type, loss_func):
-    bs = labels.size(0)
-
-    if loss_type == 'margin_rank':
-        num_choice = logits.size(1)
-        flat_logits = logits.view(-1)
-        correct_mask = F.one_hot(labels, num_classes=num_choice).view(-1)  # of length batch_size*num_choice
-        correct_logits = flat_logits[correct_mask == 1].contiguous().view(-1, 1).expand(-1,
-                                                                                        num_choice - 1).contiguous().view(
-            -1)  # of length batch_size*(num_choice-1)
-        wrong_logits = flat_logits[correct_mask == 0]
-        y = wrong_logits.new_ones((wrong_logits.size(0),))
-        loss = loss_func(correct_logits, wrong_logits, y)  # margin ranking loss
-    elif loss_type == 'cross_entropy':
-        loss = loss_func(logits, labels)
-    loss *= bs
-
-    n_corrects = (logits.argmax(1) == labels).sum().item()
-
-    return loss, n_corrects
-
-
-def calc_eval_accuracy(eval_set, model, loss_type, loss_func):
-    total_loss_acm = 0.0
-    n_samples_acm = n_corrects_acm = 0
-    model.eval()
-    with torch.no_grad():
-        for qids, labels, *input_data in tqdm(eval_set, desc="Dev/Test batch"):
-            bs = labels.size(0)
-            logits, _ = model(*input_data)
-            loss, n_corrects = calc_loss_and_acc(logits, labels, loss_type, loss_func)
-            total_loss_acm += loss.item()
-            n_corrects_acm += n_corrects
-            n_samples_acm += bs
-    return total_loss_acm / n_samples_acm, n_corrects_acm / n_samples_acm
-
-
 def evaluate(args, devices, kg):
     assert args.load_model_path is not None
     load_model_path = args.load_model_path
     print("loading from checkpoint: {}".format(load_model_path))
     checkpoint = torch.load(load_model_path, map_location='cpu')
 
-    print(checkpoint["config"])
-
     args = utils.import_config(checkpoint["config"], args)
-    dataset = graph_loader.GraphLoader(url="http://localhost:8080",
-                                       batch_size=2,
-                                       device=devices,
-                                       model_name="roberta-large")
+    graph_loader = GraphLoader(url="http://localhost:8080",
+                               batch_size=2,
+                               device=devices,
+                               model_name="roberta-large")
 
     csqa = {"answerKey": "A", "id": "1afa02df02c908a558b4036e80242fac",
             "question": {"question_concept": "revolving door",
@@ -132,20 +90,19 @@ def evaluate(args, devices, kg):
                                      {"label": "E", "text": "new york"}],
                          "stem": "A revolving door is convenient for two direction travel, but it also serves as a security measure at a what?"}}
 
-    input_example = dataset.resolve_csqa(csqa)
+    qids, labels, single_batch = graph_loader.resolve_csqa(csqa)
     model = construct_model(args, kg)
-    model.lmgnn.mp.resize_token_embeddings(len(dataset.tokenizer))
+    model.lmgnn.mp.resize_token_embeddings(len(graph_loader.tokenizer))
 
     model.load_state_dict(checkpoint["model"], strict=False)
 
-    model.to(devices[1])
+    model.to(devices[0])
     model.lmgnn.concept_emb.to(devices[0])
     model.eval()
 
-    loss_func = nn.CrossEntropyLoss(reduction='mean')
-    dev_total_loss, dev_acc = calc_eval_accuracy(input_example, model, "cross_entropy", loss_func)
-
-    print('dev_acc {:7.4f}'.format(dev_acc))
+    logits, _ = model(**single_batch.to(devices[0]))
+    n_corrects = (logits.argmax(1) == labels.to(devices[0])).sum().item()
+    print("n_corrects: {}".format(n_corrects))
 
 
 def get_devices(use_cuda):

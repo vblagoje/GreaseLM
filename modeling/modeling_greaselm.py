@@ -27,7 +27,7 @@ if os.environ.get('INHERIT_BERT', 0):
     ModelClass = modeling_bert.BertModel
 else:
     ModelClass = modeling_roberta.RobertaModel
-    
+
 print ('ModelClass', ModelClass)
 
 
@@ -49,48 +49,78 @@ class GreaseLM(nn.Module):
         edge_index_init: list of (n_examples, ). each entry is torch.tensor(2, E)
         edge_type_init:  list of (n_examples, ). each entry is torch.tensor(E, )
         """
+        def flatten(iterable):
+            for item in iterable:
+                if isinstance(item, list):
+                    yield from flatten(item)
+                else:
+                    yield item
+
+        edge_index_init = list(flatten(edge_index_init))
+        edge_type_init = list(flatten(edge_type_init))
         n_examples = len(edge_index_init)
         edge_index = [edge_index_init[_i_] + _i_ * n_nodes for _i_ in range(n_examples)]
         edge_index = torch.cat(edge_index, dim=1) #[2, total_E]
         edge_type = torch.cat(edge_type_init, dim=0) #[total_E, ]
         return edge_index, edge_type
 
-    def forward(self, *inputs, cache_output=False, detail=False):
-        """
-        inputs_ids: (batch_size, num_choice, seq_len)    -> (batch_size * num_choice, seq_len)
-        concept_ids: (batch_size, num_choice, n_node)  -> (batch_size * num_choice, n_node)
-        node_type_ids: (batch_size, num_choice, n_node) -> (batch_size * num_choice, n_node)
-        node_scores: [bs, nc, n_node, 1]
-        adj_lengths: means the "actual" number of nodes (excluding padding)(batch_size, num_choice)          -> (batch_size * num_choice, )
-        adj -> edge_index, edge_type
-            edge_index: list of (batch_size, num_choice) -> list of (batch_size * num_choice, ); each entry is torch.tensor(2, E(variable))
-                                                         -> (2, total E)
-            edge_type:  list of (batch_size, num_choice) -> list of (batch_size * num_choice, ); each entry is torch.tensor(E(variable), )
-                                                         -> (total E, )
-
-        returns:
-        logits: [bs, nc]
-        """
-        bs, nc = inputs[0].size(0), inputs[0].size(1)
+    def forward(self,
+                input_ids=None,
+                attention_mask=None,
+                token_type_ids=None,
+                special_tokens_mask=None,
+                concept_ids=None,
+                node_type_ids=None,
+                node_scores=None,
+                adj_lengths=None,
+                special_nodes_mask=None,
+                edge_index=None,
+                edge_type=None,
+                cache_output=False,
+                detail=False,
+                **kwargs):
+        #bs, nc = inputs[0].size(0), inputs[0].size(1)
 
         #Here, merge the batch dimension and the num_choice dimension
-        edge_index_orig, edge_type_orig = inputs[-2:]
-        _inputs = [x.reshape(x.size(0) * x.size(1), *x.size()[2:]) for x in inputs[:4]] + [x.reshape(x.size(0) * x.size(1), *x.size()[2:]) for x in inputs[4:-2]] + [sum(x,[]) for x in inputs[-2:]]
+        #edge_index_orig, edge_type_orig = inputs[-2:]
+        #_inputs = [x.reshape(x.size(0) * x.size(1), *x.size()[2:]) for x in inputs[:4]] + [x.reshape(x.size(0) * x.size(1), *x.size()[2:]) for x in inputs[4:-2]] + [sum(x,[]) for x in inputs[-2:]]
 
-        *lm_inputs, concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask, edge_index, edge_type = _inputs
+        #*lm_inputs, concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask, edge_index, edge_type = _inputs
+
+        #node_scores = torch.zeros_like(node_scores)
+        #edge_index, edge_type = self.batch_graph(edge_index, edge_type, concept_ids.size(1))
+        #adj = (edge_index.to(node_type_ids.device), edge_type.to(node_type_ids.device)) #edge_index: [2, total_E]   edge_type: [total_E, ]
+
+        # logits, attn = self.lmgnn(lm_inputs, concept_ids,
+        #                             node_type_ids, node_scores, adj_lengths, special_nodes_mask, adj,
+        #                             emb_data=None, cache_output=cache_output)
+
+        # # logits: [bs * nc]
+        bs, nc = input_ids.shape[0:2]
+
+        def merge_first_two_dim(x):
+            return x.view(-1, *(x.size()[2:]))
+
+        input_ids, attention_mask, token_type_ids, special_tokens_mask, concept_ids, \
+        node_type_ids, node_scores, adj_lengths, special_nodes_mask = [
+            merge_first_two_dim(t) for t in [input_ids, attention_mask,
+                                             token_type_ids,
+                                             special_tokens_mask,
+                                             concept_ids, node_type_ids,
+                                             node_scores, adj_lengths,
+                                             special_nodes_mask]]
+
         node_scores = torch.zeros_like(node_scores)
         edge_index, edge_type = self.batch_graph(edge_index, edge_type, concept_ids.size(1))
-        adj = (edge_index.to(node_type_ids.device), edge_type.to(node_type_ids.device)) #edge_index: [2, total_E]   edge_type: [total_E, ]
+        logits, attn = self.lmgnn(input_ids, attention_mask, token_type_ids, special_tokens_mask,
+                                  concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask,
+                                  (edge_index, edge_type), emb_data=None, cache_output=cache_output)
 
-        logits, attn = self.lmgnn(lm_inputs, concept_ids,
-                                    node_type_ids, node_scores, adj_lengths, special_nodes_mask, adj,
-                                    emb_data=None, cache_output=cache_output)
-        # logits: [bs * nc]
         logits = logits.view(bs, nc)
         if not detail:
             return logits, attn
         else:
-            return logits, attn, concept_ids.view(bs, nc, -1), node_type_ids.view(bs, nc, -1), edge_index_orig, edge_type_orig
+            return logits, attn, concept_ids.view(bs, nc, -1), node_type_ids.view(bs, nc, -1), edge_index, edge_type
             # edge_index_orig: list of (batch_size, num_choice). each entry is torch.tensor(2, E)
             # edge_type_orig: list of (batch_size, num_choice). each entry is torch.tensor(E, )
 
@@ -182,7 +212,19 @@ class LMGNN(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def forward(self, inputs, concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask, adj, emb_data=None, cache_output=False):
+    def forward(self,
+                input_ids,
+                attention_mask,
+                token_type_ids,
+                output_mask,
+                concept_ids,
+                node_type_ids,
+                node_scores,
+                adj_lengths,
+                special_nodes_mask,
+                adj,
+                emb_data=None,
+                cache_output=False):
         """
         concept_ids: (batch_size, n_node)
         adj: edge_index, edge_type
@@ -194,8 +236,6 @@ class LMGNN(nn.Module):
         returns:
         logits: [bs]
         """
-        #LM inputs
-        input_ids, attention_mask, token_type_ids, output_mask = inputs
 
         # GNN inputs
         concept_ids[concept_ids == 0] = self.cpnet_vocab_size + 2

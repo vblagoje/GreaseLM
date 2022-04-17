@@ -6,11 +6,12 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from transformers import (BERT_PRETRAINED_CONFIG_ARCHIVE_MAP,
-                          XLNET_PRETRAINED_CONFIG_ARCHIVE_MAP, ROBERTA_PRETRAINED_CONFIG_ARCHIVE_MAP)
+                          XLNET_PRETRAINED_CONFIG_ARCHIVE_MAP, ROBERTA_PRETRAINED_CONFIG_ARCHIVE_MAP, BatchEncoding)
 from transformers import (BertTokenizer, XLNetTokenizer, RobertaTokenizer)
 
 from preprocess_utils.convert_csqa import create_hypothesis, create_output_dict, get_fitb_from_question
 from utils.conceptnet_client import ConceptNetClient
+from utils_base import KGEncoding
 
 try:
     from transformers import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP
@@ -113,17 +114,15 @@ class GraphLoader(object):
         response = self.conceptnet_client.resolve_csqa(common_sense_qa_example=common_sense_qa_example)
         num_choices = encoder_data[0].size(1)
         assert num_choices > 0
-        *train_decoder_data, adj_data = self.load_sparse_adj_data_with_contextnode(response["result"],
-                                                                                   self.max_node_num,
-                                                                                   concepts_by_sents_list,
-                                                                                   num_choices)
-        assert all(len(qids) == len(adj_data[0]) == x.size(0) for x in
-                   [labels] + encoder_data + train_decoder_data)
+        kg_encoding: Dict[str, Any] = self.load_sparse_adj_data_with_contextnode(response["result"],
+                                                                                 self.max_node_num,
+                                                                                 concepts_by_sents_list,
+                                                                                 num_choices)
 
-        indexes = torch.arange(len(qids))
-        return MultiGPUSparseAdjDataBatchGenerator(self.device0, self.device1, self.batch_size, indexes,
-                                                   qids, labels, tensors0=encoder_data,
-                                                   tensors1=train_decoder_data, adj_data=adj_data)
+        lm_encoding = dict(input_ids=encoder_data[0], attention_mask=encoder_data[1],
+                           token_type_ids=encoder_data[2], special_tokens_mask=encoder_data[3])
+        encoding = KGEncoding(data={**lm_encoding, **kg_encoding})
+        return qids, labels, encoding
 
     def convert_qajson_to_entailment(self, qa_json: Dict[str, str], ans_pos: bool = False):
         question_text = qa_json["question"]["stem"]
@@ -190,7 +189,7 @@ class GraphLoader(object):
         return input_tensors
 
     def load_sparse_adj_data_with_contextnode(self, adj_concept_pairs, max_node_num,
-                                              concepts_by_sents_list, num_choices):
+                                              concepts_by_sents_list, num_choices) -> Dict[str, Any]:
         """Construct input tensors for the GNN component of the model."""
         # Set special nodes and links
         context_node = 0
@@ -219,17 +218,6 @@ class GraphLoader(object):
                 break
             adj, concepts, qm, am, cid2score = _data['adj'], _data['concepts'], _data['qmask'], _data['amask'], \
                                                _data['cid2score']
-            if self.debug:
-                assert len(concepts) == len(set(concepts))
-                qam = qm | am
-                # sanity check: should be T,..,T,F,F,..F
-                assert qam[0] == True
-                F_start = False
-                for TF in qam:
-                    if TF == False:
-                        F_start = True
-                    else:
-                        assert F_start == False
 
             assert n_special_nodes <= max_node_num
             special_nodes_mask[idx, :n_special_nodes] = 1
@@ -268,8 +256,8 @@ class GraphLoader(object):
             i, j = ij // n_node, ij % n_node
 
             # Prepare edges
-            i += 2;
-            j += 1;
+            i += 2
+            j += 1
             k += 1  # **** increment coordinate by 1, rel_id by 2 ****
             extra_i, extra_j, extra_k = [], [], []
             for _coord, q_tf in enumerate(qm):
@@ -311,29 +299,25 @@ class GraphLoader(object):
             edge_index.append(torch.stack([j, k], dim=0))  # each entry is [2, E]
             edge_type.append(i)  # each entry is [E, ]
 
-        ori_adj_mean = adj_lengths_ori.float().mean().item()
-        ori_adj_sigma = np.sqrt(((adj_lengths_ori.float() - ori_adj_mean) ** 2).mean().item())
-        print('| ori_adj_len: mu {:.2f} sigma {:.2f} | adj_len: {:.2f} |'.format(ori_adj_mean, ori_adj_sigma,
-                                                                                 adj_lengths.float().mean().item()) +
-              ' prune_rate： {:.2f} |'.format((adj_lengths_ori > adj_lengths).float().mean().item()) +
-              ' qc_num: {:.2f} | ac_num: {:.2f} |'.format((node_type_ids == 0).float().sum(1).mean().item(),
-                                                          (node_type_ids == 1).float().sum(1).mean().item()))
-
         edge_index = list(map(list, zip(*(iter(edge_index),) * num_choices)))
-        # list of size (n_questions, n_choices), where each entry is tensor[2, E]
-        # #this operation corresponds to .view(n_questions, n_choices)
         edge_type = list(map(list, zip(*(iter(edge_type),) * num_choices)))
-        # list of size (n_questions, n_choices), where each entry is tensor[E, ]
 
         concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask = [
             x.view(-1, num_choices, *x.size()[1:]) for x in
             (concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask)]
+
         # concept_ids: (n_questions, num_choice, max_node_num)
         # node_type_ids: (n_questions, num_choice, max_node_num)
-        # node_scores: (n_questions, num_choice, max_node_num)
+        # node_scores: (n_questions, num_choice, max_node_num, 1)
         # adj_lengths: (n_questions,　num_choice)
-        return concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask, (edge_index, edge_type)
-        # , half_n_rel * 2 + 1
+        # special_nodes_mask: (n_questions, num_choice, max_node_num)
+
+        # edge_index: list of size (n_questions, n_choices), where each entry is tensor[2, E]
+        # edge_type: list of size (n_questions, n_choices), where each entry is tensor[E, ]
+        # We can't stack edge_index and edge_type lists of tensors as tensors are not of equal size
+        return dict(concept_ids=concept_ids, node_type_ids=node_type_ids, node_scores=node_scores,
+                    adj_lengths=adj_lengths, special_nodes_mask=special_nodes_mask,
+                    edge_index=edge_index, edge_type=edge_type)
 
 
 def load_bert_xlnet_roberta_input_tensors(entailed_qa_examples, max_seq_length, debug, tokenizer, debug_sample_size):

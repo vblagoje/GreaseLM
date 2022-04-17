@@ -1,5 +1,3 @@
-import json
-import sys
 from collections import OrderedDict
 from typing import Dict, List, Any
 
@@ -44,11 +42,13 @@ class ConceptNetClient:
 
     def adj_list_to_coo_matrix(self, adj_list: List[List[int]], adj_shape: List[int]):
         """
-        It takes a list of lists, where the first list is the row indices and the second list is the column indices, and
-        returns a sparse matrix in COOrdinate format
+        It takes in a list of lists, where the first list is the row indices and the second list is the column indices, and
+        returns a sparse matrix with the same shape as the input shape
 
-        :param adj_list: A list of two lists, the first list is the row indices, the second list is the column indices
+        :param adj_list: List[List[int]] rows and columns of the adjacency matrix
         :type adj_list: List[List[int]]
+        :param adj_shape: The shape of the adjacency matrix
+        :type adj_shape: List[int]
         :return: A sparse matrix in COOrdinate format.
         """
         assert len(adj_list) == 2  # rows, cols
@@ -56,15 +56,4 @@ class ConceptNetClient:
         cols = adj_list[1]
         assert len(rows) == len(cols)
         data = np.array([1] * len(rows), dtype=np.uint8)
-        print("adj_shape", adj_shape)
         return coo_matrix((data, (rows, cols)), shape=(adj_shape[0], adj_shape[1]))
-
-
-if __name__ == "__main__":
-    print(sys.argv[1])
-    statement_file = open(sys.argv[1], "r")
-    c: ConceptNetClient = ConceptNetClient()
-    for line in statement_file:
-        common_sense_qa_example = json.loads(line)
-        response = c.resolve_csqa(common_sense_qa_example)
-        print ([r["adj"] for r in response["result"]])
