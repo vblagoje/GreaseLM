@@ -79,22 +79,46 @@ class GreaseLM(nn.Module):
                 cache_output=False,
                 detail=False,
                 **kwargs):
-        #bs, nc = inputs[0].size(0), inputs[0].size(1)
-
-        #Here, merge the batch dimension and the num_choice dimension
-        #edge_index_orig, edge_type_orig = inputs[-2:]
-        #_inputs = [x.reshape(x.size(0) * x.size(1), *x.size()[2:]) for x in inputs[:4]] + [x.reshape(x.size(0) * x.size(1), *x.size()[2:]) for x in inputs[4:-2]] + [sum(x,[]) for x in inputs[-2:]]
-
-        #*lm_inputs, concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask, edge_index, edge_type = _inputs
-
-        #node_scores = torch.zeros_like(node_scores)
-        #edge_index, edge_type = self.batch_graph(edge_index, edge_type, concept_ids.size(1))
-        #adj = (edge_index.to(node_type_ids.device), edge_type.to(node_type_ids.device)) #edge_index: [2, total_E]   edge_type: [total_E, ]
-
-        # logits, attn = self.lmgnn(lm_inputs, concept_ids,
-        #                             node_type_ids, node_scores, adj_lengths, special_nodes_mask, adj,
-        #                             emb_data=None, cache_output=cache_output)
-
+        """
+            :param input_ids:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+                    Input ids for the language model.
+             :param attention_mask:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+                    Token type ids for the language model.
+            :param token_type_ids:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+                    Token type ids for the language model.
+            :param special_tokens_mask:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+                    Output mask for the language model.
+            :param concept_ids:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+                    Resolved conceptnet ids.
+            :param node_type_ids:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+                    Conceptnet id types where 0 == question entity; 1 == answer choice entity;
+                    2 == other node; 3 == context node
+            :param node_scores:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num, 1)`):
+                    LM relevancy scores for each resolved conceptnet id.
+            :param adj_lengths:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices)`):
+                    Adjacency matrix lengths for each batch sample.
+            :param special_nodes_mask:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+                    Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
+            :param edge_index:
+               (list of (batch_size, num_choice):
+                Each entry is torch.tensor(2, E)) where E is the number of edges in the particular graph.
+            :param edge_type:
+                (list of (batch_size, num_choice):
+                Each entry is torch.tensor(E, ) where E is the number of edges in the particular graph.
+            :param cache_output:
+                (bool): Whether to cache the output of the language model.
+            :param detail:
+                (bool): Whether to return detailed output.
+        """
         # # logits: [bs * nc]
         bs, nc = input_ids.shape[0:2]
 
@@ -121,8 +145,6 @@ class GreaseLM(nn.Module):
             return logits, attn
         else:
             return logits, attn, concept_ids.view(bs, nc, -1), node_type_ids.view(bs, nc, -1), edge_index, edge_type
-            # edge_index_orig: list of (batch_size, num_choice). each entry is torch.tensor(2, E)
-            # edge_type_orig: list of (batch_size, num_choice). each entry is torch.tensor(E, )
 
     def get_fake_inputs(self, device="cuda:0"):
         bs = 4
