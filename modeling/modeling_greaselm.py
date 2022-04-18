@@ -38,9 +38,11 @@ class GreaseLM(nn.Module):
                  init_range=0.02, ie_dim=200, info_exchange=True, ie_layer_num=1, sep_ie_layers=False, layer_id=-1):
         super().__init__()
         self.lmgnn = LMGNN(args, model_name, k, n_ntype, n_etype,
-                                        n_concept, concept_dim, concept_in_dim, n_attention_head,
-                                        fc_dim, n_fc_layer, p_emb, p_gnn, p_fc, pretrained_concept_emb=pretrained_concept_emb, freeze_ent_emb=freeze_ent_emb,
-                                        init_range=init_range, ie_dim=ie_dim, info_exchange=info_exchange, ie_layer_num=ie_layer_num,  sep_ie_layers=sep_ie_layers, layer_id=layer_id)
+                           n_concept, concept_dim, concept_in_dim, n_attention_head,
+                           fc_dim, n_fc_layer, p_emb, p_gnn, p_fc, pretrained_concept_emb=pretrained_concept_emb,
+                           freeze_ent_emb=freeze_ent_emb,
+                           init_range=init_range, ie_dim=ie_dim, info_exchange=info_exchange, ie_layer_num=ie_layer_num,
+                           sep_ie_layers=sep_ie_layers, layer_id=layer_id)
 
     def batch_graph(self, edge_index_init, edge_type_init, n_nodes):
         """
@@ -79,32 +81,32 @@ class GreaseLM(nn.Module):
                 **kwargs):
         """
             :param input_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Input ids for the language model.
              :param attention_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Token type ids for the language model.
             :param token_type_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Token type ids for the language model.
             :param special_tokens_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Output mask for the language model.
             :param concept_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Resolved conceptnet ids.
             :param node_type_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Conceptnet id types where 0 == question entity; 1 == answer choice entity;
                     2 == other node; 3 == context node
             :param node_scores:
                (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num, 1)`):
                     LM relevancy scores for each resolved conceptnet id.
             :param adj_lengths:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices)`):
                     Adjacency matrix lengths for each batch sample.
             :param special_nodes_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+               (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
             :param edge_index:
                (list of (batch_size, num_choice):
@@ -166,7 +168,10 @@ class LMGNN(nn.Module):
         self.n_attention_head = n_attention_head
         self.activation = layers.GELU()
         if k >= 0:
-            self.concept_emb = layers.CustomizedEmbedding(concept_num=n_concept, concept_out_dim=concept_dim, use_contextualized=False, concept_in_dim=concept_in_dim, pretrained_concept_emb=pretrained_concept_emb, freeze_ent_emb=freeze_ent_emb)
+            self.concept_emb = layers.CustomizedEmbedding(concept_num=n_concept, concept_out_dim=concept_dim,
+                                                          use_contextualized=False, concept_in_dim=concept_in_dim,
+                                                          pretrained_concept_emb=pretrained_concept_emb,
+                                                          freeze_ent_emb=freeze_ent_emb)
             self.pooler = layers.MultiheadAttPoolLayer(n_attention_head, config.hidden_size, concept_dim)
 
         concat_vec_dim = concept_dim * 2 + config.hidden_size
@@ -178,7 +183,14 @@ class LMGNN(nn.Module):
         if init_range > 0:
             self.apply(self._init_weights)
 
-        self.mp, self.loading_info = TextKGMessagePassing.from_pretrained(model_name, output_hidden_states=True, output_loading_info=True, args=args, k=k, n_ntype=n_ntype, n_etype=n_etype, dropout=p_gnn, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc, info_exchange=info_exchange, ie_layer_num=ie_layer_num, sep_ie_layers=sep_ie_layers)
+        self.mp, self.loading_info = TextKGMessagePassing.from_pretrained(model_name, output_hidden_states=True,
+                                                                          output_loading_info=True, args=args, k=k,
+                                                                          n_ntype=n_ntype, n_etype=n_etype,
+                                                                          dropout=p_gnn, concept_dim=concept_dim,
+                                                                          ie_dim=ie_dim, p_fc=p_fc,
+                                                                          info_exchange=info_exchange,
+                                                                          ie_layer_num=ie_layer_num,
+                                                                          sep_ie_layers=sep_ie_layers)
 
         self.layer_id = layer_id
         self.cpnet_vocab_size = n_concept
@@ -208,32 +220,32 @@ class LMGNN(nn.Module):
                 cache_output=False):
         """
          :param input_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Input ids for the language model.
          :param attention_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Token type ids for the language model.
          :param token_type_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Token type ids for the language model.
          :param output_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Output mask for the language model.
          :param concept_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Resolved conceptnet ids.
          :param node_type_ids:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Conceptnet id types where 0 == question entity; 1 == answer choice entity;
                     2 == other node; 3 == context node
          :param node_scores:
                (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num, 1)`):
                     LM relevancy scores for each resolved conceptnet id.
          :param adj_lengths:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices)`):
                     Adjacency matrix lengths for each batch sample.
          :param special_nodes_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+               (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
          :param edge_index:
                 torch.tensor(2, E)) where E is the total number of edges in the particular graph.
@@ -299,7 +311,8 @@ class LMGNN(nn.Module):
 
 class TextKGMessagePassing(ModelClass):
 
-    def __init__(self, config, args={}, k=5, n_ntype=4, n_etype=38, dropout=0.2, concept_dim=200, ie_dim=200, p_fc=0.2, info_exchange=True, ie_layer_num=1, sep_ie_layers=False):
+    def __init__(self, config, args={}, k=5, n_ntype=4, n_etype=38, dropout=0.2, concept_dim=200, ie_dim=200, p_fc=0.2,
+                 info_exchange=True, ie_layer_num=1, sep_ie_layers=False):
         super().__init__(config=config)
 
         self.n_ntype = n_ntype
@@ -326,23 +339,52 @@ class TextKGMessagePassing(ModelClass):
         self.dropout = nn.Dropout(dropout)
         self.dropout_rate = dropout
 
-        self.encoder = RoBERTaGAT(config, k=k, n_ntype=n_ntype, n_etype=n_etype, hidden_size=concept_dim, dropout=dropout, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc, info_exchange=info_exchange, ie_layer_num=ie_layer_num, sep_ie_layers=sep_ie_layers)
+        self.encoder = RoBERTaGAT(config, k=k, n_ntype=n_ntype, n_etype=n_etype, hidden_size=concept_dim,
+                                  dropout=dropout, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc,
+                                  info_exchange=info_exchange, ie_layer_num=ie_layer_num, sep_ie_layers=sep_ie_layers)
 
         self.sent_dim = config.hidden_size
 
-    def forward(self, input_ids, token_type_ids, attention_mask, special_tokens_mask, H, A, node_type, node_score, special_nodes_mask, cache_output=False, position_ids=None, head_mask=None, output_hidden_states=True):
+    def forward(self, input_ids, token_type_ids, attention_mask, special_tokens_mask, H, A, node_type, node_score,
+                special_nodes_mask, cache_output=False, position_ids=None, head_mask=None, output_hidden_states=True):
         """
-        input_ids: [bs, seq_len]
-        token_type_ids: [bs, seq_len]
-        attention_mask: [bs, seq_len]
-        H: tensor of shape (batch_size, n_node, d_node)
-            node features from the previous layer
-        A: (edge_index, edge_type)
-            edge_index: [2, n_edges]
-            edge_type: [n_edges]
-        node_type: long tensor of shape (batch_size, n_node)
-            0 == question entity; 1 == answer choice entity; 2 == other node; 3 == context node
-        node_score: tensor of shape (batch_size, n_node, 1)
+           :param input_ids:
+                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
+                      Input ids for the language model.
+           :param token_type_ids:
+                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
+                      Token type ids for the language model.
+           :param attention_mask:
+                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
+                      Token type ids for the language model.
+           :param special_tokens_mask:
+                 (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, seq_len)`):
+                      Output mask for the language model.
+           :param H:
+                 (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_nodes, node_dim)`):
+                      Node features from the previous layer
+           :param A:
+                 (edge_index, edge_type) tuple:
+                    (edge_index, edge_type) pairs where edge_index: [2, n_edges], edge_type: [n_edges]
+           :param node_type:
+                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_nodes)`):
+                      0 == question entity; 1 == answer choice entity; 2 == other node; 3 == context node
+           :param node_score:
+                 (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_nodes, 1)`):
+                    LM relevancy scores for each resolved conceptnet id.
+           :param special_nodes_mask:
+                 (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, number_of_nodes)`):
+                    Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
+           :param cache_output:
+                    Whether to cache the output of the language model.
+           :param position_ids:
+                (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`, `optional`, defaults to :obj:`None`):
+                    Indices of positions of each input sequence tokens in the position embeddings.
+           :param head_mask:
+                    list of shape [num_hidden_layers]
+           :param output_hidden_states: (:obj:`bool`, `optional`, defaults to :obj:`True`):
+                    If set to ``True``, the model will return all hidden-states.
+
         """
         # LM inputs
         if attention_mask is None:
@@ -416,7 +458,9 @@ class TextKGMessagePassing(ModelClass):
 
         # Merged core
         encoder_outputs, _X = self.encoder(embedding_output,
-                                       extended_attention_mask, special_tokens_mask, head_mask, _X, edge_index, edge_type, _node_type, _node_feature_extra, special_nodes_mask, output_hidden_states=output_hidden_states)
+                                           extended_attention_mask, special_tokens_mask, head_mask, _X, edge_index,
+                                           edge_type, _node_type, _node_feature_extra, special_nodes_mask,
+                                           output_hidden_states=output_hidden_states)
 
         # LM outputs
         sequence_output = encoder_outputs[0]
@@ -736,11 +780,14 @@ class TextKGMessagePassing(ModelClass):
 
 class RoBERTaGAT(modeling_bert.BertEncoder):
 
-    def __init__(self, config, k=5, n_ntype=4, n_etype=38, hidden_size=200, dropout=0.2, concept_dim=200, ie_dim=200, p_fc=0.2, info_exchange=True, ie_layer_num=1, sep_ie_layers=False):
+    def __init__(self, config, k=5, n_ntype=4, n_etype=38, hidden_size=200, dropout=0.2, concept_dim=200, ie_dim=200,
+                 p_fc=0.2, info_exchange=True, ie_layer_num=1, sep_ie_layers=False):
         super().__init__(config)
 
         self.k = k
-        self.edge_encoder = torch.nn.Sequential(torch.nn.Linear(n_etype + 1 + n_ntype * 2, hidden_size), torch.nn.BatchNorm1d(hidden_size), torch.nn.ReLU(), torch.nn.Linear(hidden_size, hidden_size))
+        self.edge_encoder = torch.nn.Sequential(torch.nn.Linear(n_etype + 1 + n_ntype * 2, hidden_size),
+                                                torch.nn.BatchNorm1d(hidden_size), torch.nn.ReLU(),
+                                                torch.nn.Linear(hidden_size, hidden_size))
         self.gnn_layers = nn.ModuleList([modeling_gnn.GATConvE(hidden_size, n_ntype, n_etype, self.edge_encoder) for _ in range(k)])
         self.activation = layers.GELU()
         self.dropout_rate = dropout
@@ -764,23 +811,23 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
          :param attention_mask:
                (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, 1, 1, seq_len)`):
          :param special_tokens_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len)`):
+               (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, seq_len)`):
                     Token type ids for the language model.
          :param head_mask: list of shape [num_hidden_layers]
          :param _X:
               (:obj:`torch.FloatTensor` of shape :obj:`(total_n_nodes, node_dim)`):
                 `total_n_nodes` = batch_size * num_nodes
          :param edge_index:
-               (:obj:`torch.FloatTensor` of shape :obj:`(2, E)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(2, E)`):
          :param edge_type:
-               (:obj:`torch.FloatTensor` of shape :obj:`(E, )`):
+               (:obj:`torch.LongTensor` of shape :obj:`(E, )`):
          :param _node_type:
-               (:obj:`torch.FloatTensor` of shape :obj:`(total_n_nodes,)`):
+               (:obj:`torch.LongTensor` of shape :obj:`(total_n_nodes,)`):
          :param _node_feature_extra:
               (:obj:`torch.FloatTensor` of shape :obj:`(total_n_nodes, node_dim)`):
                 `total_n_nodes` = batch_size * num_nodes
          :param special_nodes_mask:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, max_node_num)`):
+               (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, max_node_num)`):
          :param output_attentions: (:obj:`bool`) Whether or not to return the attentions tensor.
          :param output_hidden_states: (:obj:`bool`) Whether or not to return the hidden states tensor.
         """
@@ -815,7 +862,9 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
                         context_node_feats = self.ie_layers[gnn_layer_index](context_node_feats)
                     else:
                         context_node_feats = self.ie_layer(context_node_feats)
-                    context_node_lm_feats, context_node_gnn_feats = torch.split(context_node_feats, [context_node_lm_feats.size(1), context_node_gnn_feats.size(1)], dim=1)
+                    context_node_lm_feats, context_node_gnn_feats = torch.split(context_node_feats,
+                                                                                [context_node_lm_feats.size(1),
+                                                                                 context_node_gnn_feats.size(1)], dim=1)
                     hidden_states[:, 0, :] = context_node_lm_feats
                     X[:, 0, :] = context_node_gnn_feats
                     _X = X.view_as(_X)
