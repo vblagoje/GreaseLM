@@ -19,14 +19,19 @@ class GreaseLMTest(unittest.TestCase):
         cp_emb = torch.tensor(np.load("data/cpnet/tzw.ent.npy"), dtype=torch.float)
         model = GreaseLM(pretrained_concept_emb=cp_emb).to(device)
         inputs = self.get_greaselm_inputs(device)
-        outputs = model(**inputs)
+        logits, _ = model(**inputs)
+        batch_size = 4
+        num_choices = 5
+        assert logits.size() == (batch_size, num_choices)
 
     def test_LMGNN(self):
         device = torch.device("cuda:0")
         cp_emb = torch.tensor(np.load("data/cpnet/tzw.ent.npy"), dtype=torch.float)
         model = LMGNN(pretrained_concept_emb=cp_emb).to(device)
         inputs = self.get_lmgnn_inputs()
-        logits = model(**inputs)
+        logits, _ = model(**inputs)
+        batch_size = 20
+        assert logits.size() == (batch_size, 1)
 
     def test_TextKGMessagePassing(self):
         device = torch.device("cuda:0")
@@ -48,7 +53,12 @@ class GreaseLMTest(unittest.TestCase):
                                                                    sep_ie_layers=conf["sep_ie_layers"])
         _ = model.to(device)
         inputs = self.get_textkg_inputs()
-        outputs = model(*inputs)
+        outputs, gnn_output = model(*inputs)
+        bs = 20
+        seq_len = 100
+        assert outputs[0].size() == (bs, seq_len, self.sent_dim)
+        n_node = 200
+        assert gnn_output.size() == (bs, n_node, self.hidden_size)
 
     def test_RoBERTaGAT(self):
         device = torch.device("cuda:0")
@@ -59,11 +69,13 @@ class GreaseLMTest(unittest.TestCase):
             output_hidden_states=True
         )
         model = RoBERTaGAT(config, sep_ie_layers=True).to(device)
-        # inputs = self.get_gat_inputs(device)
-        # outputs, _X = model(*inputs)
-
-    def test_none(self):
-        pass
+        inputs = self.get_gat_inputs(device)
+        outputs, _X = model(*inputs)
+        bs = 20
+        seq_len = 100
+        assert outputs[0].size() == (bs, seq_len, self.sent_dim)
+        n_node = 200
+        assert _X.size() == (bs * n_node, self.concept_dim)
 
     def get_gat_inputs(self, device="cuda:0"):
         bs = 20
