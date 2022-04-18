@@ -18,8 +18,6 @@ from transformers.file_utils import (
 
 from modeling import modeling_gnn
 from utils import layers
-from utils import utils
-
 logger = logging.getLogger(__name__)
 
 
@@ -145,46 +143,6 @@ class GreaseLM(nn.Module):
             return logits, attn
         else:
             return logits, attn, concept_ids.view(bs, nc, -1), node_type_ids.view(bs, nc, -1), edge_index, edge_type
-
-    def get_fake_inputs(self, device="cuda:0"):
-        bs = 4
-        nc = 5
-        seq_len = 100
-        input_ids = torch.zeros([bs, nc, seq_len], dtype=torch.long).to(device)
-        token_type_ids = torch.zeros([bs, nc, seq_len], dtype=torch.long).to(device)
-        attention_mask = torch.ones([bs, nc, seq_len]).to(device)
-        output_mask = torch.zeros([bs, nc]).to(device)
-
-        n_node = 200
-        concept_ids = torch.arange(end=n_node).repeat(bs, nc, 1).to(device)
-        adj_lengths = torch.zeros([bs, nc], dtype=torch.long).fill_(10).to(device)
-
-        n_edges = 3
-        edge_index = torch.tensor([[1, 2, 3], [4, 5, 6]]).to(device)
-        edge_type = torch.zeros(n_edges, dtype=torch.long).fill_(2).to(device)
-
-        edge_index = [[edge_index] * nc] * bs
-        edge_type = [[edge_type] * nc] * bs
-
-        node_type = torch.zeros([bs, nc, n_node], dtype=torch.long).to(device)
-        node_type[:, :, 0] = 3
-        node_score = torch.zeros([bs, nc, n_node, 1]).to(device)
-        node_score[:, :, 1] = 180
-        return input_ids, attention_mask, token_type_ids, output_mask, concept_ids, node_type, node_score, adj_lengths, edge_index, edge_type
-
-    def check_outputs(self, logits, attn):
-        bs = 4
-        nc = 5
-        assert logits.size() == (bs, nc)
-        n_edges = 3
-
-
-def test_GreaseLM(device):
-    cp_emb = torch.load("data/cpnet/cp_emb.pt")
-    model = GreaseLM(pretrained_concept_emb=cp_emb).to(device)
-    inputs = model.get_fake_inputs(device)
-    outputs = model(*inputs)
-    model.check_outputs(*outputs)
 
 
 class LMGNN(nn.Module):
@@ -337,43 +295,6 @@ class LMGNN(nn.Module):
         logits = self.fc(self.dropout_fc(concat))
 
         return logits, pool_attn
-
-    def get_fake_inputs(self, device="cuda:0"):
-        bs = 20
-        seq_len = 100
-        input_ids = torch.zeros([bs, seq_len], dtype=torch.long).to(device)
-        token_type_ids = torch.zeros([bs, seq_len], dtype=torch.long).to(device)
-        attention_mask = torch.ones([bs, seq_len]).to(device)
-
-        n_node = 200
-        concept_ids = torch.arange(end=n_node).repeat(bs, 1).to(device)
-        adj_lengths = torch.zeros([bs], dtype=torch.long).fill_(10).to(device)
-
-        n_edges = 3
-        edge_index = torch.tensor([[1, 2, 3], [4, 5, 6]]).to(device)
-        edge_type = torch.zeros(n_edges, dtype=torch.long).fill_(2).to(device)
-        adj = (edge_index, edge_type)
-
-        node_type = torch.zeros([bs, n_node], dtype=torch.long).to(device)
-        node_type[:, 0] = 3
-        node_score = torch.zeros([bs, n_node, 1]).to(device)
-        node_score[:, 1] = 180
-
-        return (input_ids, attention_mask, token_type_ids, None), concept_ids, node_type, node_score, adj_lengths, adj
-
-    def check_outputs(self, logits, pool_attn):
-        bs = 20
-        assert logits.size() == (bs, 1)
-        n_edges = 3
-
-
-def test_LMGNN(device):
-    cp_emb = torch.load("data/cpnet/cp_emb.pt")
-    model = LMGNN(pretrained_concept_emb=cp_emb).to(device)
-    inputs = model.get_fake_inputs(device)
-    outputs = model(*inputs)
-    model.check_outputs(*outputs)
-
 
 
 class TextKGMessagePassing(ModelClass):
@@ -812,40 +733,6 @@ class TextKGMessagePassing(ModelClass):
 
         return model
 
-    def get_fake_inputs(self, device="cuda:0"):
-        bs = 20
-        seq_len = 100
-        input_ids = torch.zeros([bs, seq_len], dtype=torch.long).to(device)
-        token_type_ids = torch.zeros([bs, seq_len], dtype=torch.long).to(device)
-        attention_mask = torch.ones([bs, seq_len]).to(device)
-
-        n_node = 200
-        H = torch.zeros([bs, n_node, self.hidden_size]).to(device)
-        n_edges = 3
-        edge_index = torch.tensor([[1, 2, 3], [4, 5, 6]]).to(device)
-        edge_type = torch.zeros(n_edges, dtype=torch.long).fill_(2).to(device)
-        A = (edge_index, edge_type)
-
-        node_type = torch.zeros([bs, n_node], dtype=torch.long).to(device)
-        node_type[:, 0] = 3
-        node_score = torch.zeros([bs, n_node, 1]).to(device)
-        node_score[:, 1] = 180
-        return input_ids, token_type_ids, attention_mask, H, A,  node_type, node_score
-
-    def check_outputs(self, outputs, gnn_output):
-        bs = 20
-        seq_len = 100
-        assert outputs[0].size() == (bs, seq_len, self.sent_dim)
-        n_node = 200
-        assert gnn_output.size() == (bs, n_node, self.hidden_size)
-
-
-def test_TextKGMessagePassing(device):
-    model = TextKGMessagePassing.from_pretrained("roberta-large", output_hidden_states=True).to(device)
-    inputs = model.get_fake_inputs(device)
-    outputs = model(*inputs)
-    model.check_outputs(*outputs)
-
 
 class RoBERTaGAT(modeling_bert.BertEncoder):
 
@@ -928,58 +815,3 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
             outputs = outputs + (all_attentions,)
         return outputs, _X # last-layer hidden state, (all hidden states), (all attentions)
 
-    def get_fake_inputs(self, device="cuda:0"):
-        bs = 20
-        seq_len = 100
-        hidden_states = torch.zeros([bs, seq_len, self.sent_dim]).to(device)
-        attention_mask = torch.zeros([bs, 1, 1, seq_len]).to(device)
-        head_mask = [None] * self.num_hidden_layers
-
-        n_node = 200
-        _X = torch.zeros([bs * n_node, self.concept_dim]).to(device)
-        n_edges = 3
-        edge_index = torch.tensor([[1, 2, 3], [4, 5, 6]]).to(device)
-        edge_type = torch.zeros(n_edges, dtype=torch.long).fill_(2).to(device)
-        _node_type = torch.zeros([bs, n_node], dtype=torch.long).to(device)
-        _node_type[:, 0] = 3
-        _node_type = _node_type.view(-1)
-        _node_feature_extra = torch.zeros([bs * n_node, self.concept_dim]).to(device)
-        return hidden_states, attention_mask, head_mask, _X, edge_index, edge_type, _node_type, _node_feature_extra
-
-    def check_outputs(self, outputs, _X):
-        bs = 20
-        seq_len = 100
-        assert outputs[0].size() == (bs, seq_len, self.sent_dim)
-        n_node = 200
-        assert _X.size() == (bs * n_node, self.concept_dim)
-
-
-def test_RoBERTaGAT(device):
-    config, _ = modeling_roberta.RobertaModel.config_class.from_pretrained(
-        "roberta-large",
-        cache_dir=None, return_unused_kwargs=True,
-        force_download=False,
-        output_hidden_states=True
-    )
-    model = RoBERTaGAT(config, sep_ie_layers=True).to(device)
-    inputs = model.get_fake_inputs(device)
-    outputs = model(*inputs)
-    model.check_outputs(*outputs)
-
-
-if __name__ == "__main__":
-    logging.basicConfig(format='%(asctime)s,%(msecs)d %(levelname)-8s [%(name)s:%(funcName)s():%(lineno)d] %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=logging.INFO)
-
-    utils.print_cuda_info()
-    free_gpus = utils.select_free_gpus()
-    device = torch.device("cuda:{}".format(free_gpus[0]))
-
-    # test_RoBERTaGAT(device)
-
-    # test_TextKGMessagePassing(device)
-
-    # test_LMGNN(device)
-
-    test_GreaseLM(device)

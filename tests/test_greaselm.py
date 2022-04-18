@@ -40,7 +40,8 @@ class GreaseLMTest(unittest.TestCase):
                                                                    output_hidden_states=True,
                                                                    output_loading_info=True, args={}, k=conf["k"],
                                                                    n_ntype=conf["n_ntype"], n_etype=conf["n_etype"],
-                                                                   dropout=conf["p_gnn"], concept_dim=conf["concept_dim"],
+                                                                   dropout=conf["p_gnn"],
+                                                                   concept_dim=conf["concept_dim"],
                                                                    ie_dim=conf["ie_dim"], p_fc=conf["p_fc"],
                                                                    info_exchange=conf["info_exchange"],
                                                                    ie_layer_num=conf["ie_layer_num"],
@@ -58,8 +59,8 @@ class GreaseLMTest(unittest.TestCase):
             output_hidden_states=True
         )
         model = RoBERTaGAT(config, sep_ie_layers=True).to(device)
-        #inputs = self.get_gat_inputs(device)
-        #outputs, _X = model(*inputs)
+        # inputs = self.get_gat_inputs(device)
+        # outputs, _X = model(*inputs)
 
     def test_none(self):
         pass
@@ -111,7 +112,6 @@ class GreaseLMTest(unittest.TestCase):
                     output_mask=output_mask, concept_ids=concept_ids, node_type_ids=node_type,
                     node_scores=node_score, adj_lengths=adj_lengths, special_nodes_mask=special_nodes_mask,
                     edge_index=edge_index, edge_type=edge_type)
-
 
     def get_textkg_inputs(self, device="cuda:0"):
         bs = 20
@@ -167,6 +167,3 @@ class GreaseLMTest(unittest.TestCase):
                     special_tokens_mask=output_mask, concept_ids=concept_ids, node_type_ids=node_type,
                     node_scores=node_score, adj_lengths=adj_lengths, special_nodes_mask=special_nodes_mask,
                     edge_index=edge_index, edge_type=edge_type)
-
-
-
