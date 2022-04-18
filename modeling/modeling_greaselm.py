@@ -756,17 +756,33 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
         self.num_hidden_layers = config.num_hidden_layers
         self.info_exchange = info_exchange
 
-    def forward(self, hidden_states, attention_mask, special_tokens_mask, head_mask, _X, edge_index, edge_type, _node_type, _node_feature_extra, special_nodes_mask, output_attentions=False, output_hidden_states=True):
+    def forward(self, hidden_states, attention_mask, special_tokens_mask, head_mask, _X, edge_index, edge_type,
+                _node_type, _node_feature_extra, special_nodes_mask, output_attentions=False, output_hidden_states=True):
         """
-        hidden_states: [bs, seq_len, sent_dim]
-        attention_mask: [bs, 1, 1, seq_len]
-        head_mask: list of shape [num_hidden_layers]
-
-        _X: [`total_n_nodes`, d_node] where `total_n_nodes` = b_size * n_node
-        edge_index: [2, n_edges]
-        edge_type: [n_edges]
-        _node_type: [bs * n_nodes]
-        _node_feature_extra: [bs * n_nodes, node_dim]
+         :param hidden_states:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len, sent_dim)`):
+         :param attention_mask:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, 1, 1, seq_len)`):
+         :param special_tokens_mask:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len)`):
+                    Token type ids for the language model.
+         :param head_mask: list of shape [num_hidden_layers]
+         :param _X:
+              (:obj:`torch.FloatTensor` of shape :obj:`(total_n_nodes, node_dim)`):
+                `total_n_nodes` = batch_size * num_nodes
+         :param edge_index:
+               (:obj:`torch.FloatTensor` of shape :obj:`(2, E)`):
+         :param edge_type:
+               (:obj:`torch.FloatTensor` of shape :obj:`(E, )`):
+         :param _node_type:
+               (:obj:`torch.FloatTensor` of shape :obj:`(total_n_nodes,)`):
+         :param _node_feature_extra:
+              (:obj:`torch.FloatTensor` of shape :obj:`(total_n_nodes, node_dim)`):
+                `total_n_nodes` = batch_size * num_nodes
+         :param special_nodes_mask:
+               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, max_node_num)`):
+         :param output_attentions: (:obj:`bool`) Whether or not to return the attentions tensor.
+         :param output_hidden_states: (:obj:`bool`) Whether or not to return the hidden states tensor.
         """
         bs = hidden_states.size(0)
         all_hidden_states = ()
