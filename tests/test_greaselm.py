@@ -10,9 +10,9 @@ class GreaseLMTest(unittest.TestCase):
 
     def setUp(self):
         self.concept_dim = 200
-        self.sent_dim = 768
+        self.sent_dim = 1024
         self.hidden_size = 200
-        self.num_hidden_layers = 12
+        self.num_hidden_layers = 24
 
     def test_GreaseLM(self):
         device = torch.device("cuda:0")
@@ -56,7 +56,7 @@ class GreaseLMTest(unittest.TestCase):
         outputs, gnn_output = model(*inputs)
         bs = 20
         seq_len = 100
-        assert outputs[0].size() == (bs, seq_len, 1024)
+        assert outputs[0].size() == (bs, seq_len, self.sent_dim)
         n_node = 200
         assert gnn_output.size() == (bs, n_node, self.hidden_size)
 
