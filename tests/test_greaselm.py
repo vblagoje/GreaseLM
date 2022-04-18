@@ -56,7 +56,7 @@ class GreaseLMTest(unittest.TestCase):
         outputs, gnn_output = model(*inputs)
         bs = 20
         seq_len = 100
-        assert outputs[0].size() == (bs, seq_len, self.sent_dim)
+        assert outputs[0].size() == (bs, seq_len, 1024)
         n_node = 200
         assert gnn_output.size() == (bs, n_node, self.hidden_size)
 
@@ -84,6 +84,8 @@ class GreaseLMTest(unittest.TestCase):
         attention_mask = torch.zeros([bs, 1, 1, seq_len]).to(device)
         head_mask = [None] * self.num_hidden_layers
 
+        special_tokens_mask = torch.zeros([bs, seq_len]).to(device)
+
         n_node = 200
         _X = torch.zeros([bs * n_node, self.concept_dim]).to(device)
         n_edges = 3
@@ -93,7 +95,9 @@ class GreaseLMTest(unittest.TestCase):
         _node_type[:, 0] = 3
         _node_type = _node_type.view(-1)
         _node_feature_extra = torch.zeros([bs * n_node, self.concept_dim]).to(device)
-        return hidden_states, attention_mask, head_mask, _X, edge_index, edge_type, _node_type, _node_feature_extra
+        _special_nodes_mask = torch.zeros([bs, n_node], dtype=torch.bool).to(device)
+        return hidden_states, attention_mask, special_tokens_mask, head_mask, _X, \
+               edge_index, edge_type, _node_type, _node_feature_extra, _special_nodes_mask
 
     @staticmethod
     def get_lmgnn_inputs(device="cuda:0"):
