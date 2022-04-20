@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from transformers import RobertaModel
 
-from modeling.modeling_greaselm import LMGNN, TextKGMessagePassing, RoBERTaGAT, GreaseLM
+from modeling.modeling_greaselm import LMGNN, TextKGMessagePassing, GreaseLMEncoder, GreaseLM
 
 
 class GreaseLMTest(unittest.TestCase):
@@ -68,7 +68,7 @@ class GreaseLMTest(unittest.TestCase):
             force_download=False,
             output_hidden_states=True
         )
-        model = RoBERTaGAT(config, sep_ie_layers=True).to(device)
+        model = GreaseLMEncoder(config, sep_ie_layers=True).to(device)
         inputs = self.get_gat_inputs(device)
         outputs, _X = model(*inputs)
         bs = 20

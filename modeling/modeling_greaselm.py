@@ -6,8 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import modeling_bert
-from transformers import modeling_roberta
+from transformers import BertLayer, BertModel, RobertaModel
 from transformers import PretrainedConfig
 from transformers.file_utils import (
     TF2_WEIGHTS_NAME,
@@ -24,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 if os.environ.get('INHERIT_BERT', 0):
-    ModelClass = modeling_bert.BertModel
+    ModelClass = BertModel
 else:
-    ModelClass = modeling_roberta.RobertaModel
+    ModelClass = RobertaModel
 
 print ('ModelClass', ModelClass)
 
@@ -522,9 +521,10 @@ class TextKGMessagePassing(ModelClass):
         self.dropout = nn.Dropout(dropout)
         self.dropout_rate = dropout
 
-        self.encoder = RoBERTaGAT(config, k=k, n_ntype=n_ntype, n_etype=n_etype, hidden_size=concept_dim,
-                                  dropout=dropout, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc,
-                                  info_exchange=info_exchange, ie_layer_num=ie_layer_num, sep_ie_layers=sep_ie_layers)
+        self.encoder = GreaseLMEncoder(config, k=k, n_ntype=n_ntype, n_etype=n_etype, hidden_size=concept_dim,
+                                       dropout=dropout, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc,
+                                       info_exchange=info_exchange, ie_layer_num=ie_layer_num,
+                                       sep_ie_layers=sep_ie_layers)
 
         self.sent_dim = config.hidden_size
 
@@ -961,24 +961,29 @@ class TextKGMessagePassing(ModelClass):
         return model
 
 
-class RoBERTaGAT(modeling_bert.BertEncoder):
+class GreaseLMEncoder(nn.Module):
 
     def __init__(self, config, k=5, n_ntype=4, n_etype=38, hidden_size=200, dropout=0.2, concept_dim=200, ie_dim=200,
                  p_fc=0.2, info_exchange=True, ie_layer_num=1, sep_ie_layers=False):
-        super().__init__(config)
-
+        super().__init__()
+        self.config = config
         self.k = k
         self.edge_encoder = torch.nn.Sequential(torch.nn.Linear(n_etype + 1 + n_ntype * 2, hidden_size),
                                                 torch.nn.BatchNorm1d(hidden_size), torch.nn.ReLU(),
                                                 torch.nn.Linear(hidden_size, hidden_size))
-        self.gnn_layers = nn.ModuleList([modeling_gnn.GATConvE(hidden_size, n_ntype, n_etype, self.edge_encoder) for _ in range(k)])
+
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.gnn_layers = nn.ModuleList(
+            [modeling_gnn.GATConvE(hidden_size, n_ntype, n_etype, self.edge_encoder) for _ in range(k)])
         self.activation = GELU()
         self.dropout_rate = dropout
 
         self.sent_dim = config.hidden_size
         self.sep_ie_layers = sep_ie_layers
         if sep_ie_layers:
-            self.ie_layers = nn.ModuleList([MLP(self.sent_dim + concept_dim, ie_dim, self.sent_dim + concept_dim, ie_layer_num, p_fc) for _ in range(k)])
+            self.ie_layers = nn.ModuleList(
+                [MLP(self.sent_dim + concept_dim, ie_dim, self.sent_dim + concept_dim, ie_layer_num, p_fc) for _ in
+                 range(k)])
         else:
             self.ie_layer = MLP(self.sent_dim + concept_dim, ie_dim, self.sent_dim + concept_dim, ie_layer_num, p_fc)
 
@@ -987,7 +992,9 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
         self.info_exchange = info_exchange
 
     def forward(self, hidden_states, attention_mask, special_tokens_mask, head_mask, _X, edge_index, edge_type,
-                _node_type, _node_feature_extra, special_nodes_mask, output_attentions=False, output_hidden_states=True):
+                _node_type, _node_feature_extra, special_nodes_mask, output_attentions=False,
+                output_hidden_states=True):
+
         """
          :param hidden_states:
                (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len, sent_dim)`):
@@ -1033,13 +1040,14 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
                 gnn_layer_index = i - self.num_hidden_layers + self.k
                 _X = self.gnn_layers[gnn_layer_index](_X, edge_index, edge_type, _node_type, _node_feature_extra)
                 _X = self.activation(_X)
-                _X = F.dropout(_X, self.dropout_rate, training = self.training)
+                _X = F.dropout(_X, self.dropout_rate, training=self.training)
 
                 # Exchange info between LM and GNN hidden states (Modality interaction)
-                if self.info_exchange == True or (self.info_exchange == "every-other-layer" and (i - self.num_hidden_layers + self.k) % 2 == 0):
-                    X = _X.view(bs, -1, _X.size(1)) # [bs, max_num_nodes, node_dim]
-                    context_node_lm_feats = hidden_states[:, 0, :] # [bs, sent_dim]
-                    context_node_gnn_feats = X[:, 0, :] # [bs, node_dim]
+                if self.info_exchange == True or (
+                        self.info_exchange == "every-other-layer" and (i - self.num_hidden_layers + self.k) % 2 == 0):
+                    X = _X.view(bs, -1, _X.size(1))  # [bs, max_num_nodes, node_dim]
+                    context_node_lm_feats = hidden_states[:, 0, :]  # [bs, sent_dim]
+                    context_node_gnn_feats = X[:, 0, :]  # [bs, node_dim]
                     context_node_feats = torch.cat([context_node_lm_feats, context_node_gnn_feats], dim=1)
                     if self.sep_ie_layers:
                         context_node_feats = self.ie_layers[gnn_layer_index](context_node_feats)
@@ -1061,5 +1069,4 @@ class RoBERTaGAT(modeling_bert.BertEncoder):
             outputs = outputs + (all_hidden_states,)
         if output_attentions:
             outputs = outputs + (all_attentions,)
-        return outputs, _X # last-layer hidden state, (all hidden states), (all attentions)
-
+        return outputs, _X  # last-layer hidden state, (all hidden states), (all attentions)
