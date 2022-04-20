@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from transformers import RobertaModel
 
-from modeling.modeling_greaselm import LMGNN, TextKGMessagePassing, GreaseLMEncoder, GreaseLM
+from modeling.modeling_greaselm import LMGNN, GreaseLMEncoder, GreaseLMModel, GreaseLM
 
 
 class GreaseLMTest(unittest.TestCase):
@@ -41,16 +41,16 @@ class GreaseLMTest(unittest.TestCase):
                     pretrained_concept_emb=None, freeze_ent_emb=True,
                     init_range=0.02, ie_dim=200, info_exchange=True, ie_layer_num=1, sep_ie_layers=False,
                     layer_id=-1)
-        model, loading_info = TextKGMessagePassing.from_pretrained("roberta-large",
-                                                                   output_hidden_states=True,
-                                                                   output_loading_info=True, args={}, k=conf["k"],
-                                                                   n_ntype=conf["n_ntype"], n_etype=conf["n_etype"],
-                                                                   dropout=conf["p_gnn"],
-                                                                   concept_dim=conf["concept_dim"],
-                                                                   ie_dim=conf["ie_dim"], p_fc=conf["p_fc"],
-                                                                   info_exchange=conf["info_exchange"],
-                                                                   ie_layer_num=conf["ie_layer_num"],
-                                                                   sep_ie_layers=conf["sep_ie_layers"])
+        model = GreaseLMModel.from_pretrained("roberta-large",
+                                              output_hidden_states=True,
+                                              output_loading_info=False, args={}, k=conf["k"],
+                                              n_ntype=conf["n_ntype"], n_etype=conf["n_etype"],
+                                              dropout=conf["p_gnn"],
+                                              concept_dim=conf["concept_dim"],
+                                              ie_dim=conf["ie_dim"], p_fc=conf["p_fc"],
+                                              info_exchange=conf["info_exchange"],
+                                              ie_layer_num=conf["ie_layer_num"],
+                                              sep_ie_layers=conf["sep_ie_layers"])
         _ = model.to(device)
         inputs = self.get_textkg_inputs()
         outputs, gnn_output = model(*inputs)
