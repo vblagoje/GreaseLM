@@ -345,11 +345,6 @@ class LMGNN(nn.Module):
             output_hidden_states=True
         )
         self.init_range = init_range
-
-        self.k = k
-        self.concept_dim = concept_dim
-        self.n_attention_head = n_attention_head
-        self.activation = GELU()
         if k >= 0:
             self.pooler = MultiheadAttPoolLayer(n_attention_head, config.hidden_size, concept_dim)
 
@@ -433,23 +428,6 @@ class LMGNN(nn.Module):
          :param cache_output:
                 Whether to cache the output of the language model.
         """
-
-        # # GNN inputs
-        # concept_ids[concept_ids == 0] = self.cpnet_vocab_size + 2
-        # gnn_input = self.concept_emb(concept_ids - 1, emb_data).to(node_type_ids.device)
-        # gnn_input[:, 0] = 0
-        # gnn_input = self.dropout_e(gnn_input) #(batch_size, n_node, dim_node)
-        #
-        # #Normalize node sore (use norm from Z)
-        # _mask = (torch.arange(node_scores.size(1), device=node_scores.device) < adj_lengths.unsqueeze(1)).float() #0 means masked out #[batch_size, n_node]
-        # node_scores = -node_scores
-        # node_scores = node_scores - node_scores[:, 0:1, :] #[batch_size, n_node, 1]
-        # node_scores = node_scores.squeeze(2) #[batch_size, n_node]
-        # node_scores = node_scores * _mask
-        # mean_norm  = (torch.abs(node_scores)).sum(dim=1) / adj_lengths  #[batch_size, ]
-        # node_scores = node_scores / (mean_norm.unsqueeze(1) + 1e-05) #[batch_size, n_node]
-        # node_scores = node_scores.unsqueeze(2) #[batch_size, n_node, 1]
-
         # Merged core
         outputs, gnn_output = self.mp(input_ids, token_type_ids, attention_mask, output_mask, concept_ids,
                                       (edge_index, edge_type), node_type_ids, node_scores, adj_lengths,
@@ -463,9 +441,6 @@ class LMGNN(nn.Module):
 
         sent_vecs = self.mp.pooler(hidden_states) # [bs, sent_dim]
 
-        sent_token_mask = output_mask.clone()
-        sent_token_mask[:, 0] = 0
-
         # GNN outputs
         Z_vecs = gnn_output[:,0]   #(batch_size, dim_node)
 
@@ -474,12 +449,8 @@ class LMGNN(nn.Module):
         mask = mask | (node_type_ids == 3) # pool over all KG nodes (excluding the context node)
         mask[mask.all(1), 0] = 0  # a temporary solution to avoid zero node
 
-        sent_vecs_for_pooler = sent_vecs
-        graph_vecs, pool_attn = self.pooler(sent_vecs_for_pooler, gnn_output, mask)
+        graph_vecs, pool_attn = self.pooler(sent_vecs, gnn_output, mask)
         # graph_vecs: [bs, node_dim]
-
-        sent_node_mask = special_nodes_mask.clone()
-        sent_node_mask[:, 0] = 0
 
         concat = torch.cat((graph_vecs, sent_vecs, Z_vecs), 1)
         logits = self.fc(self.dropout_fc(concat))
