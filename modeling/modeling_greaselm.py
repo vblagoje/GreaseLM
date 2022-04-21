@@ -7,15 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertLayer, BertModel, RobertaModel, RobertaConfig
-from transformers.modeling_utils import PreTrainedModel, PretrainedConfig
-from transformers.file_utils import (
-    TF2_WEIGHTS_NAME,
-    TF_WEIGHTS_NAME,
-    WEIGHTS_NAME,
-    cached_path,
-    hf_bucket_url,
-    is_remote_url,
-)
+from transformers.modeling_utils import PreTrainedModel
 from transformers.modeling_roberta import RobertaEmbeddings, RobertaPooler
 
 from modeling import modeling_gnn
@@ -211,7 +203,6 @@ class MLP(nn.Module):
         return self.layers(input)
 
 
-
 class GreaseLM(nn.Module):
 
     def __init__(self, args={}, model_name="roberta-large", k=5, n_ntype=4, n_etype=38,
@@ -330,51 +321,44 @@ class GreaseLM(nn.Module):
             return logits, attn, concept_ids.view(bs, nc, -1), node_type_ids.view(bs, nc, -1), edge_index, edge_type
 
 
-class LMGNN(nn.Module):
+# TODO: upgrade to the latest version before HF integration
+class GreaseLMPreTrainedModel(PreTrainedModel):
+    """An abstract class to handle weights initialization and
+    a simple interface for downloading and loading pretrained models.
+    """
 
-    def __init__(self, args={}, model_name="roberta-large", k=5, n_ntype=4, n_etype=38,
-                 n_concept=799273, concept_dim=200, concept_in_dim=1024, n_attention_head=2,
-                 fc_dim=200, n_fc_layer=0, p_emb=0.2, p_gnn=0.2, p_fc=0.2,
-                 pretrained_concept_emb=None, freeze_ent_emb=True,
-                 init_range=0.02, ie_dim=200, info_exchange=True, ie_layer_num=1, sep_ie_layers=False, layer_id=-1):
-        super().__init__()
-        config, _ = ModelClass.config_class.from_pretrained(
-            model_name,
-            cache_dir=None, return_unused_kwargs=True,
-            force_download=False,
-            output_hidden_states=True
-        )
-        self.init_range = init_range
-        if k >= 0:
-            self.pooler = MultiheadAttPoolLayer(n_attention_head, config.hidden_size, concept_dim)
+    config_class = RobertaConfig
+    base_model_prefix = "roberta"
 
-        concat_vec_dim = concept_dim * 2 + config.hidden_size
-        self.fc = MLP(concat_vec_dim, fc_dim, 1, n_fc_layer, p_fc, layer_norm=True)
-
-        self.dropout_fc = nn.Dropout(p_fc)
-
-        if init_range > 0:
-            self.apply(self._init_weights)
-
-        self.mp = GreaseLMModel.from_pretrained(model_name, output_hidden_states=True,
-                                                output_loading_info=False, args=args, k=k,
-                                                n_ntype=n_ntype, n_etype=n_etype,
-                                                dropout=p_gnn, concept_dim=concept_dim,
-                                                ie_dim=ie_dim, p_fc=p_fc,
-                                                info_exchange=info_exchange,
-                                                ie_layer_num=ie_layer_num,
-                                                sep_ie_layers=sep_ie_layers)
-
-        self.layer_id = layer_id
-
+    # Copied from transformers.modeling_bert.BertPreTrainedModel._init_weights
     def _init_weights(self, module):
+        """ Initialize the weights """
         if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=self.init_range)
-            if hasattr(module, 'bias') and module.bias is not None:
-                module.bias.data.zero_()
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+
+class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.greaselm = GreaseLMModel(config)
+        self.pooler = MultiheadAttPoolLayer(config.n_attention_head,
+                                            config.hidden_size,
+                                            config.concept_dim) if config.k >= 0 else None
+
+        concat_vec_dim = config.concept_dim * 2 + config.hidden_size
+        self.fc = MLP(concat_vec_dim, config.fc_dim, 1, config.n_fc_layer, config.p_fc, layer_norm=True)
+
+        self.dropout_fc = nn.Dropout(config.p_fc)
+        self.layer_id = config.layer_id
+        self.init_weights()
 
     def forward(self,
                 input_ids,
@@ -429,9 +413,9 @@ class LMGNN(nn.Module):
                 Whether to cache the output of the language model.
         """
         # Merged core
-        outputs, gnn_output = self.mp(input_ids, token_type_ids, attention_mask, output_mask, concept_ids,
-                                      (edge_index, edge_type), node_type_ids, node_scores, adj_lengths,
-                                      special_nodes_mask)
+        outputs, gnn_output = self.greaselm(input_ids, token_type_ids, attention_mask, output_mask, concept_ids,
+                                            (edge_index, edge_type), node_type_ids, node_scores, adj_lengths,
+                                            special_nodes_mask)
         # outputs: ([bs, seq_len, sent_dim], [bs, sent_dim], ([bs, seq_len, sent_dim] for _ in range(25)))
         # gnn_output: [bs, n_node, dim_node]
 
@@ -439,7 +423,7 @@ class LMGNN(nn.Module):
         all_hidden_states = outputs[-1] # ([bs, seq_len, sent_dim] for _ in range(25))
         hidden_states = all_hidden_states[self.layer_id] # [bs, seq_len, sent_dim]
 
-        sent_vecs = self.mp.pooler(hidden_states) # [bs, sent_dim]
+        sent_vecs = self.greaselm.pooler(hidden_states) # [bs, sent_dim]
 
         # GNN outputs
         Z_vecs = gnn_output[:,0]   #(batch_size, dim_node)
@@ -458,75 +442,38 @@ class LMGNN(nn.Module):
         return logits, pool_attn
 
 
-# TODO: upgrade to the latest version before HF integration
-class GreaseLMPreTrainedModel(PreTrainedModel):
-    """An abstract class to handle weights initialization and
-    a simple interface for downloading and loading pretrained models.
-    """
-
-    config_class = RobertaConfig
-    base_model_prefix = "roberta"
-
-    # Copied from transformers.modeling_bert.BertPreTrainedModel._init_weights
-    def _init_weights(self, module):
-        """ Initialize the weights """
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-        if isinstance(module, nn.Linear) and module.bias is not None:
-            module.bias.data.zero_()
-
-
 class GreaseLMModel(GreaseLMPreTrainedModel):
 
-    def __init__(self, config, args={}, k=5, n_ntype=4, n_etype=38, dropout=0.2, n_concept=799273, concept_in_dim=1024,
-                 concept_dim=200, pretrained_concept_emb=None, freeze_ent_emb=None, ie_dim=200, p_fc=0.2,
-                 info_exchange=True, ie_layer_num=1, sep_ie_layers=False, add_pooling_layer=True):
+    def __init__(self, config, pretrained_concept_emb, freeze_ent_emb=True, add_pooling_layer=True, dropout=0.2):
         super().__init__(config)
         self.config = config
 
-        self.n_ntype = n_ntype
-        self.n_etype = n_etype
+        self.hidden_size = config.concept_dim
+        self.emb_node_type = nn.Linear(self.n_ntype, config.concept_dim // 2)
 
-        self.hidden_size = concept_dim
-        self.emb_node_type = nn.Linear(self.n_ntype, concept_dim // 2)
-
-        self.basis_f = 'sin' #['id', 'linact', 'sin', 'none']
+        self.basis_f = 'sin'  # ['id', 'linact', 'sin', 'none']
         if self.basis_f in ['id']:
-            self.emb_score = nn.Linear(1, concept_dim // 2)
+            self.emb_score = nn.Linear(1, config.concept_dim // 2)
         elif self.basis_f in ['linact']:
-            self.B_lin = nn.Linear(1, concept_dim // 2)
-            self.emb_score = nn.Linear(concept_dim // 2, concept_dim // 2)
+            self.B_lin = nn.Linear(1, config.concept_dim // 2)
+            self.emb_score = nn.Linear(config.concept_dim // 2, config.concept_dim // 2)
         elif self.basis_f in ['sin']:
-            self.emb_score = nn.Linear(concept_dim // 2, concept_dim // 2)
+            self.emb_score = nn.Linear(config.concept_dim // 2, config.concept_dim // 2)
 
-        self.k = k
-
-        self.Vh = nn.Linear(concept_dim, concept_dim)
-        self.Vx = nn.Linear(concept_dim, concept_dim)
+        self.Vh = nn.Linear(config.concept_dim, config.concept_dim)
+        self.Vx = nn.Linear(config.concept_dim, config.concept_dim)
 
         self.activation = GELU()
         self.dropout = nn.Dropout(dropout)
-        self.dropout_rate = dropout
-        self.concept_emb = None
         self.dropout_e = nn.Dropout(dropout)
-        self.cpnet_vocab_size = n_concept
-        if k >= 0:
-            self.concept_emb = CustomizedEmbedding(concept_num=n_concept, concept_out_dim=concept_dim,
-                                                   use_contextualized=False, concept_in_dim=concept_in_dim,
-                                                   pretrained_concept_emb=pretrained_concept_emb,
-                                                   freeze_ent_emb=freeze_ent_emb)
+        self.cpnet_vocab_size = config.n_concept
+        self.concept_emb = CustomizedEmbedding(concept_num=config.n_concept, concept_out_dim=config.concept_dim,
+                                               use_contextualized=False, concept_in_dim=config.concept_in_dim,
+                                               pretrained_concept_emb=pretrained_concept_emb,
+                                               freeze_ent_emb=freeze_ent_emb) if config.k >= 0 else None
         self.embeddings = RobertaEmbeddings(config)
-        self.encoder = GreaseLMEncoder(config, k=k, n_ntype=n_ntype, n_etype=n_etype, hidden_size=concept_dim,
-                                       dropout=dropout, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc,
-                                       info_exchange=info_exchange, ie_layer_num=ie_layer_num,
-                                       sep_ie_layers=sep_ie_layers)
+        self.encoder = GreaseLMEncoder(config)
         self.pooler = RobertaPooler(config) if add_pooling_layer else None
-        self.sent_dim = config.hidden_size
         self.init_weights()
 
     def get_input_embeddings(self):
@@ -700,33 +647,35 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
 
 class GreaseLMEncoder(nn.Module):
 
-    def __init__(self, config, k=5, n_ntype=4, n_etype=38, hidden_size=200, dropout=0.2, concept_dim=200, ie_dim=200,
-                 p_fc=0.2, info_exchange=True, ie_layer_num=1, sep_ie_layers=False):
+    def __init__(self, config, dropout=0.2):
         super().__init__()
         self.config = config
-        self.k = k
-        self.edge_encoder = torch.nn.Sequential(torch.nn.Linear(n_etype + 1 + n_ntype * 2, hidden_size),
-                                                torch.nn.BatchNorm1d(hidden_size), torch.nn.ReLU(),
-                                                torch.nn.Linear(hidden_size, hidden_size))
+        self.k = config.k
+        self.edge_encoder = torch.nn.Sequential(
+            torch.nn.Linear(config.n_etype + 1 + config.n_ntype * 2, config.hidden_size),
+            torch.nn.BatchNorm1d(config.hidden_size), torch.nn.ReLU(),
+            torch.nn.Linear(config.hidden_size, config.hidden_size))
 
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.gnn_layers = nn.ModuleList(
-            [modeling_gnn.GATConvE(hidden_size, n_ntype, n_etype, self.edge_encoder) for _ in range(k)])
+            [modeling_gnn.GATConvE(config.hidden_size, config.n_ntype, config.n_etype, self.edge_encoder) for _ in
+             range(config.k)])
         self.activation = GELU()
         self.dropout_rate = dropout
 
-        self.sent_dim = config.hidden_size
-        self.sep_ie_layers = sep_ie_layers
-        if sep_ie_layers:
+        self.sep_ie_layers = config.sep_ie_layers
+        if self.sep_ie_layers:
             self.ie_layers = nn.ModuleList(
-                [MLP(self.sent_dim + concept_dim, ie_dim, self.sent_dim + concept_dim, ie_layer_num, p_fc) for _ in
-                 range(k)])
+                [MLP(config.hidden_size + config.concept_dim, config.ie_dim,
+                     config.hidden_size + config.concept_dim, config.ie_layer_num, config.p_fc) for _ in
+                 range(config.k)])
         else:
-            self.ie_layer = MLP(self.sent_dim + concept_dim, ie_dim, self.sent_dim + concept_dim, ie_layer_num, p_fc)
+            self.ie_layer = MLP(config.hidden_size + config.concept_dim, config.ie_dim,
+                                config.hidden_size + config.concept_dim,
+                                config.ie_layer_num, config.p_fc)
 
-        self.concept_dim = concept_dim
         self.num_hidden_layers = config.num_hidden_layers
-        self.info_exchange = info_exchange
+        self.info_exchange = config.info_exchange
 
     def forward(self, hidden_states, attention_mask, special_tokens_mask, head_mask, _X, edge_index, edge_type,
                 _node_type, _node_feature_extra, special_nodes_mask, output_attentions=False,
