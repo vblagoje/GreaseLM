@@ -351,16 +351,11 @@ class LMGNN(nn.Module):
         self.n_attention_head = n_attention_head
         self.activation = GELU()
         if k >= 0:
-            self.concept_emb = CustomizedEmbedding(concept_num=n_concept, concept_out_dim=concept_dim,
-                                                   use_contextualized=False, concept_in_dim=concept_in_dim,
-                                                   pretrained_concept_emb=pretrained_concept_emb,
-                                                   freeze_ent_emb=freeze_ent_emb)
             self.pooler = MultiheadAttPoolLayer(n_attention_head, config.hidden_size, concept_dim)
 
         concat_vec_dim = concept_dim * 2 + config.hidden_size
         self.fc = MLP(concat_vec_dim, fc_dim, 1, n_fc_layer, p_fc, layer_norm=True)
 
-        self.dropout_e = nn.Dropout(p_emb)
         self.dropout_fc = nn.Dropout(p_fc)
 
         if init_range > 0:
@@ -376,7 +371,6 @@ class LMGNN(nn.Module):
                                                 sep_ie_layers=sep_ie_layers)
 
         self.layer_id = layer_id
-        self.cpnet_vocab_size = n_concept
 
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
@@ -440,25 +434,26 @@ class LMGNN(nn.Module):
                 Whether to cache the output of the language model.
         """
 
-        # GNN inputs
-        concept_ids[concept_ids == 0] = self.cpnet_vocab_size + 2
-        gnn_input = self.concept_emb(concept_ids - 1, emb_data).to(node_type_ids.device)
-        gnn_input[:, 0] = 0
-        gnn_input = self.dropout_e(gnn_input) #(batch_size, n_node, dim_node)
-
-        #Normalize node sore (use norm from Z)
-        _mask = (torch.arange(node_scores.size(1), device=node_scores.device) < adj_lengths.unsqueeze(1)).float() #0 means masked out #[batch_size, n_node]
-        node_scores = -node_scores
-        node_scores = node_scores - node_scores[:, 0:1, :] #[batch_size, n_node, 1]
-        node_scores = node_scores.squeeze(2) #[batch_size, n_node]
-        node_scores = node_scores * _mask
-        mean_norm  = (torch.abs(node_scores)).sum(dim=1) / adj_lengths  #[batch_size, ]
-        node_scores = node_scores / (mean_norm.unsqueeze(1) + 1e-05) #[batch_size, n_node]
-        node_scores = node_scores.unsqueeze(2) #[batch_size, n_node, 1]
+        # # GNN inputs
+        # concept_ids[concept_ids == 0] = self.cpnet_vocab_size + 2
+        # gnn_input = self.concept_emb(concept_ids - 1, emb_data).to(node_type_ids.device)
+        # gnn_input[:, 0] = 0
+        # gnn_input = self.dropout_e(gnn_input) #(batch_size, n_node, dim_node)
+        #
+        # #Normalize node sore (use norm from Z)
+        # _mask = (torch.arange(node_scores.size(1), device=node_scores.device) < adj_lengths.unsqueeze(1)).float() #0 means masked out #[batch_size, n_node]
+        # node_scores = -node_scores
+        # node_scores = node_scores - node_scores[:, 0:1, :] #[batch_size, n_node, 1]
+        # node_scores = node_scores.squeeze(2) #[batch_size, n_node]
+        # node_scores = node_scores * _mask
+        # mean_norm  = (torch.abs(node_scores)).sum(dim=1) / adj_lengths  #[batch_size, ]
+        # node_scores = node_scores / (mean_norm.unsqueeze(1) + 1e-05) #[batch_size, n_node]
+        # node_scores = node_scores.unsqueeze(2) #[batch_size, n_node, 1]
 
         # Merged core
-        outputs, gnn_output = self.mp(input_ids, token_type_ids, attention_mask, output_mask, gnn_input, (edge_index, edge_type),
-                                      node_type_ids, node_scores, special_nodes_mask, output_hidden_states=True)
+        outputs, gnn_output = self.mp(input_ids, token_type_ids, attention_mask, output_mask, concept_ids,
+                                      (edge_index, edge_type), node_type_ids, node_scores, adj_lengths,
+                                      special_nodes_mask)
         # outputs: ([bs, seq_len, sent_dim], [bs, sent_dim], ([bs, seq_len, sent_dim] for _ in range(25)))
         # gnn_output: [bs, n_node, dim_node]
 
@@ -517,7 +512,8 @@ class GreaseLMPreTrainedModel(PreTrainedModel):
 
 class GreaseLMModel(GreaseLMPreTrainedModel):
 
-    def __init__(self, config, args={}, k=5, n_ntype=4, n_etype=38, dropout=0.2, concept_dim=200, ie_dim=200, p_fc=0.2,
+    def __init__(self, config, args={}, k=5, n_ntype=4, n_etype=38, dropout=0.2, n_concept=799273, concept_in_dim=1024,
+                 concept_dim=200, pretrained_concept_emb=None, freeze_ent_emb=None, ie_dim=200, p_fc=0.2,
                  info_exchange=True, ie_layer_num=1, sep_ie_layers=False, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
@@ -545,6 +541,14 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         self.activation = GELU()
         self.dropout = nn.Dropout(dropout)
         self.dropout_rate = dropout
+        self.concept_emb = None
+        self.dropout_e = nn.Dropout(dropout)
+        self.cpnet_vocab_size = n_concept
+        if k >= 0:
+            self.concept_emb = CustomizedEmbedding(concept_num=n_concept, concept_out_dim=concept_dim,
+                                                   use_contextualized=False, concept_in_dim=concept_in_dim,
+                                                   pretrained_concept_emb=pretrained_concept_emb,
+                                                   freeze_ent_emb=freeze_ent_emb)
         self.embeddings = RobertaEmbeddings(config)
         self.encoder = GreaseLMEncoder(config, k=k, n_ntype=n_ntype, n_etype=n_etype, hidden_size=concept_dim,
                                        dropout=dropout, concept_dim=concept_dim, ie_dim=ie_dim, p_fc=p_fc,
@@ -568,8 +572,9 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, special_tokens_mask, H, A, node_type, node_score,
-                special_nodes_mask, cache_output=False, position_ids=None, head_mask=None, output_hidden_states=True):
+    def forward(self, input_ids, token_type_ids, attention_mask, special_tokens_mask, concept_ids, A, node_type,
+                node_scores, adj_lengths, special_nodes_mask, position_ids=None, head_mask=None, emb_data=None,
+                cache_output=False, output_hidden_states=True):
         """
            :param input_ids:
                  (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
@@ -583,28 +588,33 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
            :param special_tokens_mask:
                  (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, seq_len)`):
                       Output mask for the language model.
-           :param H:
-                 (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_nodes, node_dim)`):
-                      Node features from the previous layer
+           :param concept_ids:
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
+                    Resolved conceptnet ids.
            :param A:
                  (edge_index, edge_type) tuple:
                     (edge_index, edge_type) pairs where edge_index: [2, n_edges], edge_type: [n_edges]
            :param node_type:
                  (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_nodes)`):
                       0 == question entity; 1 == answer choice entity; 2 == other node; 3 == context node
-           :param node_score:
-                 (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_nodes, 1)`):
-                    LM relevancy scores for each resolved conceptnet id.
+           :param node_scores:
+                  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num, 1)`):
+                    LM relevancy scores for each resolved conceptnet id
+           :param adj_lengths:
+               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices)`):
+                    Adjacency matrix lengths for each batch sample.
            :param special_nodes_mask:
                  (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, number_of_nodes)`):
                     Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
-           :param cache_output:
-                    Whether to cache the output of the language model.
            :param position_ids:
                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`, `optional`, defaults to :obj:`None`):
                     Indices of positions of each input sequence tokens in the position embeddings.
            :param head_mask:
                     list of shape [num_hidden_layers]
+           :param emb_data:
+                torch.tensor(batch_size, number_of_choices, max_node_num, emb_dim)
+           :param cache_output:
+                    Whether to cache the output of the language model.
            :param output_hidden_states: (:obj:`bool`, `optional`, defaults to :obj:`True`):
                     If set to ``True``, the model will return all hidden-states.
 
@@ -653,6 +663,23 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
 
         # GNN inputs
+        concept_ids[concept_ids == 0] = self.cpnet_vocab_size + 2
+        gnn_input = self.concept_emb(concept_ids - 1, emb_data).to(node_scores.device)
+        gnn_input[:, 0] = 0
+        # H - node features from the previous layer
+        H = self.dropout_e(gnn_input)  # (batch_size, n_node, dim_node)
+
+        # Normalize node sore (use norm from Z)
+        _mask = (torch.arange(node_scores.size(1), device=node_scores.device) < adj_lengths.unsqueeze(
+            1)).float()  # 0 means masked out #[batch_size, n_node]
+        node_scores = -node_scores
+        node_scores = node_scores - node_scores[:, 0:1, :]  # [batch_size, n_node, 1]
+        node_scores = node_scores.squeeze(2)  # [batch_size, n_node]
+        node_scores = node_scores * _mask
+        mean_norm = (torch.abs(node_scores)).sum(dim=1) / adj_lengths  # [batch_size, ]
+        node_scores = node_scores / (mean_norm.unsqueeze(1) + 1e-05)  # [batch_size, n_node]
+        node_score = node_scores.unsqueeze(2)  # [batch_size, n_node, 1]
+
         _batch_size, _n_nodes = node_type.size()
 
         #Embed type

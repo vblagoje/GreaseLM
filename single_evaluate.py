@@ -97,7 +97,6 @@ def evaluate(args, devices, kg):
     model.load_state_dict(checkpoint["model"], strict=False)
 
     model.to(devices[0])
-    model.lmgnn.concept_emb.to(devices[0])
     model.eval()
 
     logits, _ = model(**single_batch.to(devices[0]))
