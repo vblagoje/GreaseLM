@@ -348,7 +348,7 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
 
     def __init__(self, config, pretrained_concept_emb_file=None):
         super().__init__(config)
-        self.greaselm = GreaseLMModel(config, pretrained_concept_emb_file)
+        self.greaselm = GreaseLMModel(config, pretrained_concept_emb_file="./greaselm_model/tzw.ent.npy")
         self.pooler = MultiheadAttPoolLayer(config.n_attention_head,
                                             config.hidden_size,
                                             config.concept_dim) if config.k >= 0 else None
@@ -451,7 +451,7 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         pretrained_concept_emb = torch.tensor(np.load(pretrained_concept_emb_file), dtype=torch.float)
         concept_num, concept_in_dim = pretrained_concept_emb.size(0), pretrained_concept_emb.size(1)
         self.hidden_size = config.concept_dim
-        self.emb_node_type = nn.Linear(self.n_ntype, config.concept_dim // 2)
+        self.emb_node_type = nn.Linear(config.n_ntype, config.concept_dim // 2)
 
         self.basis_f = 'sin'  # ['id', 'linact', 'sin', 'none']
         if self.basis_f in ['id']:
@@ -654,13 +654,13 @@ class GreaseLMEncoder(nn.Module):
         self.config = config
         self.k = config.k
         self.edge_encoder = torch.nn.Sequential(
-            torch.nn.Linear(config.n_etype + 1 + config.n_ntype * 2, config.hidden_size),
-            torch.nn.BatchNorm1d(config.hidden_size), torch.nn.ReLU(),
-            torch.nn.Linear(config.hidden_size, config.hidden_size))
+            torch.nn.Linear(config.n_etype + 1 + config.n_ntype * 2, config.gnn_hidden_size),
+            torch.nn.BatchNorm1d(config.gnn_hidden_size), torch.nn.ReLU(),
+            torch.nn.Linear(config.gnn_hidden_size, config.gnn_hidden_size))
 
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.gnn_layers = nn.ModuleList(
-            [modeling_gnn.GATConvE(config.hidden_size, config.n_ntype, config.n_etype, self.edge_encoder) for _ in
+            [modeling_gnn.GATConvE(config.gnn_hidden_size, config.n_ntype, config.n_etype, self.edge_encoder) for _ in
              range(config.k)])
         self.activation = GELU()
         self.dropout_rate = dropout
@@ -672,9 +672,8 @@ class GreaseLMEncoder(nn.Module):
                      config.hidden_size + config.concept_dim, config.ie_layer_num, config.p_fc) for _ in
                  range(config.k)])
         else:
-            self.ie_layer = MLP(config.hidden_size + config.concept_dim, config.ie_dim,
-                                config.hidden_size + config.concept_dim,
-                                config.ie_layer_num, config.p_fc)
+            ie_layer_size = config.hidden_size + config.concept_dim
+            self.ie_layer = MLP(ie_layer_size, config.ie_dim, ie_layer_size, config.ie_layer_num, config.p_fc)
 
         self.num_hidden_layers = config.num_hidden_layers
         self.info_exchange = config.info_exchange
