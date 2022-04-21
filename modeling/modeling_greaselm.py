@@ -346,9 +346,9 @@ class GreaseLMPreTrainedModel(PreTrainedModel):
 
 class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
 
-    def __init__(self, config):
+    def __init__(self, config, pretrained_concept_emb_file=None):
         super().__init__(config)
-        self.greaselm = GreaseLMModel(config)
+        self.greaselm = GreaseLMModel(config, pretrained_concept_emb_file)
         self.pooler = MultiheadAttPoolLayer(config.n_attention_head,
                                             config.hidden_size,
                                             config.concept_dim) if config.k >= 0 else None
@@ -444,10 +444,12 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
 
 class GreaseLMModel(GreaseLMPreTrainedModel):
 
-    def __init__(self, config, pretrained_concept_emb, freeze_ent_emb=True, add_pooling_layer=True, dropout=0.2):
+    def __init__(self, config, pretrained_concept_emb_file, freeze_ent_emb=True, add_pooling_layer=True, dropout=0.2):
         super().__init__(config)
         self.config = config
 
+        pretrained_concept_emb = torch.tensor(np.load(pretrained_concept_emb_file), dtype=torch.float)
+        concept_num, concept_in_dim = pretrained_concept_emb.size(0), pretrained_concept_emb.size(1)
         self.hidden_size = config.concept_dim
         self.emb_node_type = nn.Linear(self.n_ntype, config.concept_dim // 2)
 
