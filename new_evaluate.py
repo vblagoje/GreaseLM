@@ -1,4 +1,5 @@
 import torch
+from transformers.modeling_outputs import MultipleChoiceModelOutput
 
 from modeling.modeling_greaselm import GreaseLMForMultipleChoice
 from utils.graph_loader import GraphLoader
@@ -24,12 +25,11 @@ def evaluate():
 
     qids, labels, single_batch = graph_loader.resolve_csqa(csqa)
     model = GreaseLMForMultipleChoice.from_pretrained("./greaselm_model/")
-    model.resize_token_embeddings(len(graph_loader.tokenizer))
 
     model.to(device)
     model.eval()
 
-    output: GreaseLMForMultipleChoice = model(**single_batch.to(device))
+    output: MultipleChoiceModelOutput = model(**single_batch.to(device))
     result = output.logits.argmax(1) == labels.to(device)
     model_answer = index_to_answer(output.logits.argmax(1).item())
     correct_answer = index_to_answer(labels.item())
