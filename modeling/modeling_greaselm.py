@@ -538,7 +538,8 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         _batch_size, _n_nodes = node_type_ids.size()
 
         #Embed type
-        T = modeling_gnn.make_one_hot(node_type_ids.view(-1).contiguous(), self.n_ntype).view(_batch_size, _n_nodes, self.n_ntype)
+        T = modeling_gnn.make_one_hot(node_type_ids.view(-1).contiguous(),
+                                      self.config.n_ntype).view(_batch_size, _n_nodes, self.config.n_ntype)
         node_type_emb = self.activation(self.emb_node_type(T)) #[batch_size, n_node, dim/2]
 
         #Embed score
