@@ -1,26 +1,15 @@
-import logging
 import math
-import os
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import BertLayer, BertModel, RobertaModel, RobertaConfig
-from transformers.modeling_utils import PreTrainedModel
+from transformers import BertLayer, RobertaConfig
+from transformers.modeling_outputs import MultipleChoiceModelOutput
 from transformers.modeling_roberta import RobertaEmbeddings, RobertaPooler
+from transformers.modeling_utils import PreTrainedModel
 
 from modeling import modeling_gnn
-
-logger = logging.getLogger(__name__)
-
-
-if os.environ.get('INHERIT_BERT', 0):
-    ModelClass = BertModel
-else:
-    ModelClass = RobertaModel
-
-print ('ModelClass', ModelClass)
 
 
 def freeze_net(module):
@@ -203,124 +192,6 @@ class MLP(nn.Module):
         return self.layers(input)
 
 
-class GreaseLM(nn.Module):
-
-    def __init__(self, args={}, model_name="roberta-large", k=5, n_ntype=4, n_etype=38,
-                 n_concept=799273, concept_dim=200, concept_in_dim=1024, n_attention_head=2,
-                 fc_dim=200, n_fc_layer=0, p_emb=0.2, p_gnn=0.2, p_fc=0.2,
-                 pretrained_concept_emb=None, freeze_ent_emb=True,
-                 init_range=0.02, ie_dim=200, info_exchange=True, ie_layer_num=1, sep_ie_layers=False, layer_id=-1):
-        super().__init__()
-        self.lmgnn = LMGNN(args, model_name, k, n_ntype, n_etype,
-                           n_concept, concept_dim, concept_in_dim, n_attention_head,
-                           fc_dim, n_fc_layer, p_emb, p_gnn, p_fc, pretrained_concept_emb=pretrained_concept_emb,
-                           freeze_ent_emb=freeze_ent_emb,
-                           init_range=init_range, ie_dim=ie_dim, info_exchange=info_exchange, ie_layer_num=ie_layer_num,
-                           sep_ie_layers=sep_ie_layers, layer_id=layer_id)
-
-    def batch_graph(self, edge_index_init, edge_type_init, n_nodes):
-        """
-        edge_index_init: list of (n_examples, ). each entry is torch.tensor(2, E)
-        edge_type_init:  list of (n_examples, ). each entry is torch.tensor(E, )
-        """
-        def flatten(iterable):
-            for item in iterable:
-                if isinstance(item, list):
-                    yield from flatten(item)
-                else:
-                    yield item
-
-        edge_index_init = list(flatten(edge_index_init))
-        edge_type_init = list(flatten(edge_type_init))
-        n_examples = len(edge_index_init)
-        edge_index = [edge_index_init[_i_] + _i_ * n_nodes for _i_ in range(n_examples)]
-        edge_index = torch.cat(edge_index, dim=1)  # [2, total_E]
-        edge_type = torch.cat(edge_type_init, dim=0)  # [total_E,]
-        return edge_index, edge_type
-
-    def forward(self,
-                input_ids=None,
-                attention_mask=None,
-                token_type_ids=None,
-                special_tokens_mask=None,
-                concept_ids=None,
-                node_type_ids=None,
-                node_scores=None,
-                adj_lengths=None,
-                special_nodes_mask=None,
-                edge_index=None,
-                edge_type=None,
-                cache_output=False,
-                detail=False,
-                **kwargs):
-        """
-            :param input_ids:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
-                    Input ids for the language model.
-             :param attention_mask:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
-                    Token type ids for the language model.
-            :param token_type_ids:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
-                    Token type ids for the language model.
-            :param special_tokens_mask:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
-                    Output mask for the language model.
-            :param concept_ids:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
-                    Resolved conceptnet ids.
-            :param node_type_ids:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
-                    Conceptnet id types where 0 == question entity; 1 == answer choice entity;
-                    2 == other node; 3 == context node
-            :param node_scores:
-               (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num, 1)`):
-                    LM relevancy scores for each resolved conceptnet id.
-            :param adj_lengths:
-               (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices)`):
-                    Adjacency matrix lengths for each batch sample.
-            :param special_nodes_mask:
-               (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
-                    Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
-            :param edge_index:
-               (list of (batch_size, num_choice):
-                Each entry is torch.tensor(2, E)) where E is the number of edges in the particular graph.
-            :param edge_type:
-                (list of (batch_size, num_choice):
-                Each entry is torch.tensor(E, ) where E is the number of edges in the particular graph.
-            :param cache_output:
-                (bool): Whether to cache the output of the language model.
-            :param detail:
-                (bool): Whether to return detailed output.
-        """
-        # # logits: [bs * nc]
-        bs, nc = input_ids.shape[0:2]
-
-        def merge_first_two_dim(x):
-            return x.view(-1, *(x.size()[2:]))
-
-        input_ids, attention_mask, token_type_ids, special_tokens_mask, concept_ids, \
-        node_type_ids, node_scores, adj_lengths, special_nodes_mask = [
-            merge_first_two_dim(t) for t in [input_ids, attention_mask,
-                                             token_type_ids,
-                                             special_tokens_mask,
-                                             concept_ids, node_type_ids,
-                                             node_scores, adj_lengths,
-                                             special_nodes_mask]]
-
-        node_scores = torch.zeros_like(node_scores)
-        edge_index, edge_type = self.batch_graph(edge_index, edge_type, concept_ids.size(1))
-        logits, attn = self.lmgnn(input_ids, attention_mask, token_type_ids, special_tokens_mask,
-                                  concept_ids, node_type_ids, node_scores, adj_lengths, special_nodes_mask,
-                                  edge_index, edge_type, emb_data=None, cache_output=cache_output)
-
-        logits = logits.view(bs, nc)
-        if not detail:
-            return logits, attn
-        else:
-            return logits, attn, concept_ids.view(bs, nc, -1), node_type_ids.view(bs, nc, -1), edge_index, edge_type
-
-
 # TODO: upgrade to the latest version before HF integration
 class GreaseLMPreTrainedModel(PreTrainedModel):
     """An abstract class to handle weights initialization and
@@ -364,7 +235,7 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
                 input_ids,
                 attention_mask,
                 token_type_ids,
-                output_mask,
+                special_tokens_mask,
                 concept_ids,
                 node_type_ids,
                 node_scores,
@@ -373,6 +244,7 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
                 edge_index,
                 edge_type,
                 emb_data=None,
+                detail=False,
                 cache_output=False):
         """
          :param input_ids:
@@ -380,11 +252,11 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
                     Input ids for the language model.
          :param attention_mask:
                (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
-                    Token type ids for the language model.
+                    Attention mask for the language model.
          :param token_type_ids:
                (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Token type ids for the language model.
-         :param output_mask:
+         :param special_tokens_mask:
                (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, seq_len)`):
                     Output mask for the language model.
          :param concept_ids:
@@ -409,12 +281,16 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
                 torch.tensor(E, ) where E is the total number of edges in the particular graph.
          :param emb_data:
                 torch.tensor(batch_size, number_of_choices, max_node_num, emb_dim)
+         :param detail:
+                (bool): Whether to return detailed output.
          :param cache_output:
                 Whether to cache the output of the language model.
         """
+        bs, nc = input_ids.shape[0:2]
+
         # Merged core
-        outputs, gnn_output = self.greaselm(input_ids, token_type_ids, attention_mask, output_mask, concept_ids,
-                                            (edge_index, edge_type), node_type_ids, node_scores, adj_lengths,
+        outputs, gnn_output = self.greaselm(input_ids, attention_mask, token_type_ids, special_tokens_mask, concept_ids,
+                                            edge_index, edge_type, node_type_ids, node_scores, adj_lengths,
                                             special_nodes_mask)
         # outputs: ([bs, seq_len, sent_dim], [bs, sent_dim], ([bs, seq_len, sent_dim] for _ in range(25)))
         # gnn_output: [bs, n_node, dim_node]
@@ -439,7 +315,11 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
         concat = torch.cat((graph_vecs, sent_vecs, Z_vecs), 1)
         logits = self.fc(self.dropout_fc(concat))
 
-        return logits, pool_attn
+        logits = logits.view(bs, nc)
+        return MultipleChoiceModelOutput(
+            logits=logits,
+            attentions=pool_attn,
+        )
 
 
 class GreaseLMModel(GreaseLMPreTrainedModel):
@@ -492,17 +372,51 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, special_tokens_mask, concept_ids, A, node_type,
-                node_scores, adj_lengths, special_nodes_mask, position_ids=None, head_mask=None, emb_data=None,
-                cache_output=False, output_hidden_states=True):
+    def batch_graph(self, edge_index_init, edge_type_init, n_nodes):
+        """
+        edge_index_init: list of (n_examples, ). each entry is torch.tensor(2, E)
+        edge_type_init:  list of (n_examples, ). each entry is torch.tensor(E, )
+        """
+        def flatten(iterable):
+            for item in iterable:
+                if isinstance(item, list):
+                    yield from flatten(item)
+                else:
+                    yield item
+
+        edge_index_init = list(flatten(edge_index_init))
+        edge_type_init = list(flatten(edge_type_init))
+        n_examples = len(edge_index_init)
+        edge_index = [edge_index_init[_i_] + _i_ * n_nodes for _i_ in range(n_examples)]
+        edge_index = torch.cat(edge_index, dim=1)  # [2, total_E]
+        edge_type = torch.cat(edge_type_init, dim=0)  # [total_E,]
+        return edge_index, edge_type
+
+    def forward(self,
+                input_ids,
+                attention_mask,
+                token_type_ids,
+                special_tokens_mask,
+                concept_ids,
+                node_type_ids,
+                node_scores,
+                adj_lengths,
+                special_nodes_mask,
+                edge_index,
+                edge_type,
+                position_ids=None,
+                head_mask=None,
+                emb_data=None,
+                cache_output=False,
+                output_hidden_states=True):
         """
            :param input_ids:
                  (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
                       Input ids for the language model.
-           :param token_type_ids:
-                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
-                      Token type ids for the language model.
            :param attention_mask:
+                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
+                      Attention mask for the language model.
+           :param token_type_ids:
                  (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`):
                       Token type ids for the language model.
            :param special_tokens_mask:
@@ -511,10 +425,7 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
            :param concept_ids:
                (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_choices, max_node_num)`):
                     Resolved conceptnet ids.
-           :param A:
-                 (edge_index, edge_type) tuple:
-                    (edge_index, edge_type) pairs where edge_index: [2, n_edges], edge_type: [n_edges]
-           :param node_type:
+           :param node_type_ids:
                  (:obj:`torch.LongTensor` of shape :obj:`(batch_size, number_of_nodes)`):
                       0 == question entity; 1 == answer choice entity; 2 == other node; 3 == context node
            :param node_scores:
@@ -526,6 +437,10 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
            :param special_nodes_mask:
                  (:obj:`torch.BoolTensor` of shape :obj:`(batch_size, number_of_nodes)`):
                     Mask identifying special nodes in the graph (interaction node in the GreaseLM paper).
+           :param edge_index:
+                torch.tensor(2, E)) where E is the total number of edges in the particular graph.
+           :param edge_type:
+                torch.tensor(E, ) where E is the total number of edges in the particular graph.
            :param position_ids:
                 (:obj:`torch.LongTensor` of shape :obj:`(batch_size, seq_len)`, `optional`, defaults to :obj:`None`):
                     Indices of positions of each input sequence tokens in the position embeddings.
@@ -539,6 +454,20 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
                     If set to ``True``, the model will return all hidden-states.
 
         """
+        def merge_first_two_dim(x):
+            return x.view(-1, *(x.size()[2:]))
+
+        input_ids, attention_mask, token_type_ids, special_tokens_mask, concept_ids, \
+        node_type_ids, node_scores, adj_lengths, special_nodes_mask = [
+            merge_first_two_dim(t) for t in [input_ids, attention_mask,
+                                             token_type_ids,
+                                             special_tokens_mask,
+                                             concept_ids, node_type_ids,
+                                             node_scores, adj_lengths,
+                                             special_nodes_mask]]
+        edge_index, edge_type = self.batch_graph(edge_index, edge_type, concept_ids.size(1))
+        node_scores = torch.zeros_like(node_scores)
+
         # LM inputs
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
@@ -600,15 +529,15 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         node_scores = node_scores / (mean_norm.unsqueeze(1) + 1e-05)  # [batch_size, n_node]
         node_score = node_scores.unsqueeze(2)  # [batch_size, n_node, 1]
 
-        _batch_size, _n_nodes = node_type.size()
+        _batch_size, _n_nodes = node_type_ids.size()
 
         #Embed type
-        T = modeling_gnn.make_one_hot(node_type.view(-1).contiguous(), self.n_ntype).view(_batch_size, _n_nodes, self.n_ntype)
+        T = modeling_gnn.make_one_hot(node_type_ids.view(-1).contiguous(), self.n_ntype).view(_batch_size, _n_nodes, self.n_ntype)
         node_type_emb = self.activation(self.emb_node_type(T)) #[batch_size, n_node, dim/2]
 
         #Embed score
         if self.basis_f == 'sin':
-            js = torch.arange(self.hidden_size//2).unsqueeze(0).unsqueeze(0).float().to(node_type.device) #[1,1,dim/2]
+            js = torch.arange(self.hidden_size//2).unsqueeze(0).unsqueeze(0).float().to(node_type_ids.device) #[1,1,dim/2]
             js = torch.pow(1.1, js) #[1,1,dim/2]
             B = torch.sin(js * node_score) #[batch_size, n_node, dim/2]
             node_score_emb = self.activation(self.emb_score(B)) #[batch_size, n_node, dim/2]
@@ -621,9 +550,8 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
 
 
         X = H
-        edge_index, edge_type = A #edge_index: [2, total_E]   edge_type: [total_E, ]  where total_E is for the batched graph
         _X = X.view(-1, X.size(2)).contiguous() #[`total_n_nodes`, d_node] where `total_n_nodes` = b_size * n_node
-        _node_type = node_type.view(-1).contiguous() #[`total_n_nodes`, ]
+        _node_type = node_type_ids.view(-1).contiguous() #[`total_n_nodes`, ]
         _node_feature_extra = torch.cat([node_type_emb, node_score_emb], dim=2).view(_node_type.size(0), -1).contiguous() #[`total_n_nodes`, dim]
 
         # Merged core
@@ -639,7 +567,7 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         outputs = (sequence_output, pooled_output,) + encoder_outputs[1:]  # add hidden_states and attentions if they are here
 
         # GNN outputs
-        X = _X.view(node_type.size(0), node_type.size(1), -1) #[batch_size, n_node, dim]
+        X = _X.view(node_type_ids.size(0), node_type_ids.size(1), -1) #[batch_size, n_node, dim]
 
         output = self.activation(self.Vh(H) + self.Vx(X))
         output = self.dropout(output)
