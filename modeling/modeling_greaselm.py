@@ -310,9 +310,9 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
         # GNN outputs
         Z_vecs = gnn_output[:,0]   #(batch_size, dim_node)
 
-        mask = torch.arange(node_type_ids.size(1), device=node_type_ids.device) >= adj_lengths.unsqueeze(1) #1 means masked out
+        mask = torch.arange(node_type_ids.size(-1), device=node_type_ids.device) >= adj_lengths[0, ...].unsqueeze(-1)
 
-        mask = mask | (node_type_ids == 3) # pool over all KG nodes (excluding the context node)
+        mask = mask | (node_type_ids[0, ...] == 3) # pool over all KG nodes (excluding the context node)
         mask[mask.all(1), 0] = 0  # a temporary solution to avoid zero node
 
         graph_vecs, pool_attn = self.pooler(sent_vecs, gnn_output, mask)
