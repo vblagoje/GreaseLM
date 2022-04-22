@@ -14,6 +14,10 @@ from utils import utils
 logger = logging.getLogger(__name__)
 
 
+def index_to_answer(index, choices=["A", "B", "C", "D", "E"]):
+    return choices[index]
+
+
 def evaluate(devices):
     graph_loader = GraphLoader(url="http://localhost:8080",
                                batch_size=2,
@@ -35,7 +39,13 @@ def evaluate(devices):
     model.eval()
 
     output: GreaseLMForMultipleChoice = model(**single_batch.to(devices[0]))
-    print(output)
+    result = output.logits.argmax(1) == labels.to(devices[0])
+    model_answer = index_to_answer(output.logits.argmax(1).item())
+    correct_answer = index_to_answer(labels.item())
+    if result.item():
+        print(f"Model answered correctly, answer is {model_answer}")
+    else:
+        print(F"Model answered incorrectly, answer is not {model_answer} but {correct_answer}")
 
 
 def get_devices(use_cuda):
