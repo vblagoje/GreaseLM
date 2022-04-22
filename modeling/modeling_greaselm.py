@@ -231,6 +231,12 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
         self.layer_id = config.layer_id
         self.init_weights()
 
+    def get_input_embeddings(self):
+        return self.greaselm.embeddings.word_embeddings
+
+    def set_input_embeddings(self, value):
+        self.greaselm.embeddings.word_embeddings = value
+
     def forward(self,
                 input_ids,
                 attention_mask,
@@ -290,8 +296,8 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
 
         # Merged core
         outputs, gnn_output = self.greaselm(input_ids, attention_mask, token_type_ids, special_tokens_mask, concept_ids,
-                                            edge_index, edge_type, node_type_ids, node_scores, adj_lengths,
-                                            special_nodes_mask)
+                                            node_type_ids, node_scores, adj_lengths, special_nodes_mask, edge_index,
+                                            edge_type)
         # outputs: ([bs, seq_len, sent_dim], [bs, sent_dim], ([bs, seq_len, sent_dim] for _ in range(25)))
         # gnn_output: [bs, n_node, dim_node]
 
