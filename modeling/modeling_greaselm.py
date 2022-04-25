@@ -1,15 +1,21 @@
 import math
+import os
+from os.path import exists as file_exists
+from typing import Union, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from huggingface_hub import hf_hub_download
 from transformers import BertLayer, RobertaConfig
 from transformers.modeling_outputs import MultipleChoiceModelOutput
 from transformers.modeling_roberta import RobertaEmbeddings, RobertaPooler
 from transformers.modeling_utils import PreTrainedModel
 
 from modeling import modeling_gnn
+
+_CONCEPT_EMBEDDINGS_FILE_NAME = "tzw.ent.npy"
 
 
 def freeze_net(module):
@@ -219,7 +225,7 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
 
     def __init__(self, config, pretrained_concept_emb_file=None):
         super().__init__(config)
-        self.greaselm = GreaseLMModel(config, pretrained_concept_emb_file="./greaselm_model/tzw.ent.npy")
+        self.greaselm = GreaseLMModel(config, pretrained_concept_emb_file=pretrained_concept_emb_file)
         self.pooler = MultiheadAttPoolLayer(config.n_attention_head,
                                             config.hidden_size,
                                             config.concept_dim) if config.k >= 0 else None
@@ -324,9 +330,11 @@ class GreaseLMForMultipleChoice(GreaseLMPreTrainedModel):
 
 class GreaseLMModel(GreaseLMPreTrainedModel):
 
-    def __init__(self, config, pretrained_concept_emb_file, freeze_ent_emb=True, add_pooling_layer=True, dropout=0.2):
+    def __init__(self, config, pretrained_concept_emb_file=None, freeze_ent_emb=True, add_pooling_layer=True, dropout=0.2):
         super().__init__(config)
         self.config = config
+        assert pretrained_concept_emb_file is not None and file_exists(pretrained_concept_emb_file), \
+            f"Pretrained concept embedding file not found: {pretrained_concept_emb_file}"
 
         pretrained_concept_emb = torch.tensor(np.load(pretrained_concept_emb_file), dtype=torch.float)
         concept_num, concept_in_dim = pretrained_concept_emb.size(0), pretrained_concept_emb.size(1)
@@ -371,6 +379,16 @@ class GreaseLMModel(GreaseLMPreTrainedModel):
         """
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], *model_args, **kwargs):
+        if os.path.isdir(pretrained_model_name_or_path):
+            concept_emb = os.path.join(pretrained_model_name_or_path, _CONCEPT_EMBEDDINGS_FILE_NAME)
+        else:
+            concept_emb = hf_hub_download(repo_id=pretrained_model_name_or_path,
+                                          filename=_CONCEPT_EMBEDDINGS_FILE_NAME, **kwargs)
+        kwargs["pretrained_concept_emb_file"] = concept_emb
+        return super(GreaseLMModel, cls).from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
 
     def batch_graph(self, edge_index_init, edge_type_init, n_nodes):
         """
