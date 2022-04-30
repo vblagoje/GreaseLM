@@ -10,13 +10,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm, trange
 import transformers
+from transformers import GreaseLMForMultipleChoice
 try:
     from transformers import (ConstantLRSchedule, WarmupLinearSchedule, WarmupConstantSchedule)
 except:
     from transformers import get_constant_schedule, get_constant_schedule_with_warmup,  get_linear_schedule_with_warmup
 import wandb
 
-from modeling import modeling_greaselm
 from utils import data_utils
 from utils import optimization_utils
 from utils import parser_utils
@@ -161,8 +161,8 @@ def calc_eval_accuracy(eval_set, model, loss_type, loss_func, debug, save_test_p
     with torch.no_grad():
         for qids, labels, *input_data in tqdm(eval_set, desc="Dev/Test batch"):
             bs = labels.size(0)
-            logits, _ = model(*input_data)
-
+            output = model(*input_data)
+            logits = output["logits"]
             loss, n_corrects = calc_loss_and_acc(logits, labels, loss_type, loss_func)
 
             total_loss_acm += loss.item()
@@ -450,15 +450,10 @@ def evaluate(args, has_test_split, devices, kg):
     dev_dataloader = dataset.dev()
     if has_test_split:
         test_dataloader = dataset.test()
-    model = construct_model(args, kg)
-    model.lmgnn.mp.resize_token_embeddings(len(dataset.tokenizer))
-
-    model.load_state_dict(checkpoint["model"], strict=False)
+    model = GreaseLMForMultipleChoice.from_pretrained("vblagoje/greaselm")
     epoch_id = checkpoint['epoch']
 
     model.to(devices[1])
-    model.lmgnn.concept_emb.to(devices[0])
-    model.eval()
 
     if args.loss == 'margin_rank':
         loss_func = nn.MarginRankingLoss(margin=0.1, reduction='mean')
