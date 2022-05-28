@@ -450,7 +450,7 @@ def evaluate(args, has_test_split, devices, kg):
     dev_dataloader = dataset.dev()
     if has_test_split:
         test_dataloader = dataset.test()
-    model = GreaseLMForMultipleChoice.from_pretrained("vblagoje/greaselm")
+    model = GreaseLMForMultipleChoice.from_pretrained("vblagoje/greaselm-obqa")
     epoch_id = checkpoint['epoch']
 
     model.to(devices[1])
