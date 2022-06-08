@@ -26,6 +26,7 @@ from utils import utils
 DECODER_DEFAULT_LR = {
     'csqa': 1e-3,
     'obqa': 3e-4,
+    'obqa_issues': 3e-4,
     'medqa_usmle': 1e-3,
 }
 

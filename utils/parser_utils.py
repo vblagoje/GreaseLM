@@ -18,16 +18,25 @@ ENCODER_DEFAULT_LR = {
         'bert-large-cased': 1e-4,
         'roberta-large': 1e-5,
     },
+    'obqa_issues': {
+        'lstm': 3e-4,
+        'openai-gpt': 3e-5,
+        'bert-base-cased': 1e-4,
+        'bert-large-cased': 1e-4,
+        'roberta-large': 1e-5,
+    },
+
     'medqa_usmle': {
         'cambridgeltl/SapBERT-from-PubMedBERT-fulltext': 5e-5,
     },
 }
 
-DATASET_LIST = ['csqa', 'obqa', 'medqa_usmle']
+DATASET_LIST = ['csqa', 'obqa', 'obqa_issues', 'medqa_usmle']
 
 DATASET_SETTING = {
     'csqa': 'inhouse',
     'obqa': 'official',
+    'obqa_issues': 'official',
     'medqa_usmle': 'official',
 }
 
